@@ -46,4 +46,10 @@ describe('parseConfig', () => {
     expect(config.LOG_DIR).toBe('/tmp/logs')
     expect(config.LITELLM_BASE_URL).toBe('http://proxy:4000')
   })
+
+  it('throws when DELIVEROO_PORT is not a valid number', () => {
+    expect(() => parseConfig({ ...base, DELIVEROO_PORT: 'abc' })).toThrow(
+      'DELIVEROO_PORT must be a valid number'
+    )
+  })
 })
