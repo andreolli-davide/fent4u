@@ -29,9 +29,12 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     throw new Error(`Invalid LOG_LEVEL: ${level}`)
   }
 
+  const port = Number(env.DELIVEROO_PORT)
+  if (Number.isNaN(port)) throw new Error('DELIVEROO_PORT must be a valid number')
+
   return {
     DELIVEROO_HOST: env.DELIVEROO_HOST!,
-    DELIVEROO_PORT: Number(env.DELIVEROO_PORT),
+    DELIVEROO_PORT: port,
     TOKEN_LIAISON: env.TOKEN_LIAISON!,
     TOKEN_COURIER: env.TOKEN_COURIER!,
     LITELLM_MODEL: env.LITELLM_MODEL!,
