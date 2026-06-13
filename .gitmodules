@@ -1,0 +1,3 @@
+[submodule "external/deliveroo.js"]
+	path = external/deliveroo.js
+	url = https://github.com/unitn-ASA/Deliveroo.js
