@@ -1,0 +1,21 @@
+{
+  "name": "fent4u",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "dev": "bun run src/main.ts 2>&1 | pino-pretty",
+    "test": "bun test",
+    "analyse": "bun run scripts/analyse.ts"
+  },
+  "dependencies": {
+    "@unitn-asa/deliveroo-js-sdk": "latest",
+    "litellm": "latest",
+    "pino": "^9"
+  },
+  "devDependencies": {
+    "@duckdb/node-api": "latest",
+    "@types/bun": "latest",
+    "pino-pretty": "^13"
+  }
+}
