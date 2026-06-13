@@ -30,5 +30,3 @@ self.onmessage = (event: MessageEvent<WorkerEnvelope>) => {
     // BDI loop wired here in subsequent tasks
   }
 }
-
-export type { send }
