@@ -40,18 +40,19 @@ courier.addEventListener('message', handleMessage('courier'))
 liaison.addEventListener('error', (e) => log.error({ err: e.message }, 'liaison worker error'))
 courier.addEventListener('error', (e) => log.error({ err: e.message }, 'courier worker error'))
 
-const initLiaison: WorkerEnvelope = { kind: 'init', config: { ...config, TOKEN: config.TOKEN_LIAISON } } as unknown as WorkerEnvelope
-const initCourier: WorkerEnvelope = { kind: 'init', config: { ...config, TOKEN: config.TOKEN_COURIER } } as unknown as WorkerEnvelope
+liaison.postMessage({ kind: 'init', config } satisfies WorkerEnvelope)
+courier.postMessage({ kind: 'init', config } satisfies WorkerEnvelope)
 
-liaison.postMessage(initLiaison)
-courier.postMessage(initCourier)
-
-log.info({ logPath }, 'fent4u started — both workers initialised')
+log.info({ logPath }, 'fent4u started — both workers spawned')
 
 process.on('SIGINT', async () => {
   log.info('shutting down')
   liaison.terminate()
   courier.terminate()
-  await logFile.flush()
+  try {
+    await logFile.flush()
+  } catch (err) {
+    process.stderr.write(`Failed to flush logs: ${String(err)}\n`)
+  }
   process.exit(0)
 })
