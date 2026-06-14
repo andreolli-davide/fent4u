@@ -55,7 +55,7 @@ export function select(cands: Candidate[], committed: Intention | null, hCommit:
  * a-priori weight of 1 per spawner tile this slice; staleness = tnow - lastSeen
  * (tnow if never seen). Returns the argmax of theta_explore*[spawnValue + kappa*staleness]/(d+1)^alpha.
  */
-export function chooseExplore(spawners: Pos[], seenAt: Map<string, number>, self: Pos, tnow: number, dist: (a: Pos, b: Pos) => number, params: Params): { target: ExploreTarget; u: number } | null {
+export function chooseExplore(spawners: Pos[], seenAt: Map<string, number>, self: Pos, tnow: number, dist: (a: Pos, b: Pos) => number, params: Params): Candidate | null {
   let best: { target: ExploreTarget; u: number } | null = null
   for (const s of spawners) {
     const dd = dist(self, s)
@@ -66,5 +66,5 @@ export function chooseExplore(spawners: Pos[], seenAt: Map<string, number>, self
     const u = rate(value, dd, params.alpha)
     if (best === null || u > best.u) best = { target: { tile: s, score: staleness }, u }
   }
-  return best
+  return best === null ? null : { intention: { kind: 'explore', target: best.target }, u: best.u }
 }

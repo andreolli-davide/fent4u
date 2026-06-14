@@ -45,5 +45,5 @@ test('chooseExplore picks the stalest reachable spawner', () => {
   const seenAt = new Map<string, number>([['2,0', 100]]) // (2,0) seen recently; (8,0) never
   const dist = (a: Pos, b: Pos): number => Math.abs(a.x - b.x)
   const t = chooseExplore(spawners, seenAt, { x: 0, y: 0 }, 100, dist, DEFAULT_PARAMS)
-  expect(t?.target.tile).toEqual({ x: 8, y: 0 })
+  expect(t?.intention.target.tile).toEqual({ x: 8, y: 0 })
 })
