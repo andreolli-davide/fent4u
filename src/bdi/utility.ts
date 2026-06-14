@@ -62,3 +62,43 @@ export function pAvail(p: ParcelBelief, dSelfP: number, enemies: EnemyThreat[], 
 
 /** Backward compatibility alias for posKey; canonical version lives in src/types/perception.ts. */
 export const tileKey = posKey
+
+export type CountShaper = (k: number) => number
+export type ZoneShaper = (z: Pos) => number
+export const M1: CountShaper = () => 1
+export const G1: ZoneShaper = () => 1
+
+/** Rate denominator (§5.5): value / (L+1)^alpha. */
+export function rate(value: number, L: number, alpha: number): number {
+  return value / Math.pow(L + 1, alpha)
+}
+
+/** §5.4 delivery value kernel for a set delivered to zone z after L travel ticks. */
+export function vValue(parcels: ParcelBelief[], z: Pos, L: number, tnow: number, dc: DecayConsts, m: CountShaper = M1, g: ZoneShaper = G1): number {
+  let sum = 0
+  for (const p of parcels) sum += Math.max(0, rnow(p, tnow, dc) - dc.rho * L)
+  return g(z) * m(parcels.length) * sum
+}
+
+/**
+ * §6.1 reactive subset choice on a delivery tile. With m≡1 the best bundle is all
+ * positive-Rnow carried parcels (no carry cap, value monotone in set).
+ */
+export function deliverBundle(carried: ParcelBelief[], tile: Pos, tnow: number, dc: DecayConsts, m: CountShaper = M1, g: ZoneShaper = G1): { set: ParcelBelief[]; value: number } {
+  const set = carried.filter((p) => rnow(p, tnow, dc) > 0)
+  return { set, value: vValue(set, tile, 0, tnow, dc, m, g) }
+}
+
+export interface ZonePick { zone: Pos; L: number; rate: number }
+
+/** §6.0 value-aware zone selection: argmax of the travel-decayed kernel rate. */
+export function bestZone(parcels: ParcelBelief[], from: Pos, zones: Pos[], tnow: number, dc: DecayConsts, dist: (a: Pos, b: Pos) => number, alpha: number, m: CountShaper = M1, g: ZoneShaper = G1): ZonePick | null {
+  let best: ZonePick | null = null
+  for (const z of zones) {
+    const L = dist(from, z)
+    if (!Number.isFinite(L)) continue
+    const r = rate(vValue(parcels, z, L, tnow, dc, m, g), L, alpha)
+    if (best === null || r > best.rate) best = { zone: z, L, rate: r }
+  }
+  return best
+}
