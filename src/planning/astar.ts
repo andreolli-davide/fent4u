@@ -132,6 +132,7 @@ export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResu
   if (from.x === to.x && from.y === to.y) return { reachable: true, L: 0, firstStep: null, pushes: [] }
 
   // budgetMs enforced in Task 3 (push-aware search); move-only search is fast enough to skip the guard
+  const usedPushDest = new Set<string>()
   const open = new Map<string, Node>()
   const closed = new Set<string>()
   const start: Node = { pos: from, g: 0, f: manhattan(from, to), firstStep: null }
@@ -164,12 +165,18 @@ export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResu
       if (ctx.obstacles.agentAt.has(nk)) continue
       if (ctx.obstacles.crateAt.has(nk)) {
         // crate ahead: try an admissible push (skip when in crates-as-walls fallback)
+        // Only the first-step push is tracked per plan (§15.3 defers multi-push); enforce
+        // single-destination-per-search so two push edges cannot claim the same slide tile.
         if (ctx.cratesAsWalls) continue
         if (!isPushAdmissible(grid, ctx, np, dir)) continue
+        const beyond = { x: np.x + DELTA[dir].dx, y: np.y + DELTA[dir].dy }
+        const beyondKey = key(beyond)
+        if (usedPushDest.has(beyondKey)) continue
         const crate = ctx.obstacles.crateAt.get(nk)!
         const g = cur.g + 1
         const existing = open.get(nk)
         if (existing !== undefined && existing.g <= g) continue
+        usedPushDest.add(beyondKey)
         const push: Step = { kind: 'push', dir, crateId: crate.id }
         const firstStep: Step = cur.firstStep ?? push
         open.set(nk, { pos: np, g, f: g + manhattan(np, to), firstStep })
