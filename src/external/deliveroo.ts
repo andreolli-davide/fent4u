@@ -38,3 +38,18 @@ export function buildConsts(io: IOConfig): GameConsts {
     PENALTY: io.PENALTY,
   }
 }
+
+/**
+ * Server-authoritative tick. Anchored to the most recent server frame (delivered
+ * via the 1 Hz `ping` event) and interpolated with wall-clock time so it has
+ * per-tick resolution between pings. Both agents re-anchor to the same server
+ * frame, keeping their ticks cross-comparable (DESIGN §2.3, §6).
+ */
+export function tickFrom(
+  anchorFrame: number,
+  anchorWallMs: number,
+  nowMs: number,
+  clockMs: number,
+): number {
+  return anchorFrame + Math.floor((nowMs - anchorWallMs) / clockMs)
+}
