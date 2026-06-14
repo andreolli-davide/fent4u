@@ -25,3 +25,7 @@ test('partial file merges over defaults', () => {
 test('out-of-range value throws', () => {
   expect(() => loadParams(tmpFile('beta_comp: 2.0\n'))).toThrow(/beta_comp/)
 })
+
+test('non-number value throws', () => {
+  expect(() => loadParams(tmpFile('alpha: "fast"\n'))).toThrow(/alpha/)
+})
