@@ -1,0 +1,62 @@
+// src/bdi/utility.ts
+// Utility functions for parcel value assessment (§5.2/5.3).
+// Implements deterministic reward decay, survival probability, and availability assessment
+// under decay and race conditions.
+import type { Pos } from '../types/perception.js'
+import type { GameConsts } from '../types/perception.js'
+import type { ParcelBelief } from '../blackboard/beliefs.js'
+
+export interface DecayConsts {
+  rho: number
+  lambda: number
+  lambdaAgent: number
+  decayIntervalTicks: number
+}
+
+/** Derive the §5.2/5.3 decay constants from server config. Infinite decay => rho=lambda=0. */
+export function decayConsts(c: GameConsts): DecayConsts {
+  const decayIntervalTicks = c.PARCEL_DECAY_TICKS
+  const ticksPerMove = c.MOVEMENT_DURATION / c.CLOCK
+  const rho = decayIntervalTicks === Infinity ? 0 : ticksPerMove / decayIntervalTicks
+  const lambda = decayIntervalTicks === Infinity ? 0 : Math.LN2 / (3 * decayIntervalTicks)
+  return { rho, lambda, lambdaAgent: Math.LN2 / 3, decayIntervalTicks }
+}
+
+const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
+
+/** §5.2 deterministic reward decay, floored at 0. */
+export function rnow(p: ParcelBelief, tnow: number, dc: DecayConsts): number {
+  return Math.max(0, p.rewardSeen - dc.rho * (tnow - p.lastSeen))
+}
+
+/** §5.3 survival probability: exists despite staleness + the travel still to come. */
+export function psurv(p: ParcelBelief, tnow: number, dSelfP: number, dc: DecayConsts): number {
+  return Math.exp(-dc.lambda * (tnow - p.lastSeen + dSelfP))
+}
+
+/** A single enemy's grab probability (§5.3), weighted by sighting freshness. */
+export function grab(enemyAge: number, dSelf: number, dEnemy: number, betaComp: number, lambdaAgent: number): number {
+  const fresh = Math.exp(-lambdaAgent * enemyAge)
+  const raceFrac = clamp((dSelf - dEnemy) / (dSelf + 1), 0, 1)
+  return betaComp * fresh * raceFrac
+}
+
+export interface EnemyThreat {
+  age: number // tnow - enemy.lastSeen
+  dToP: number // d(enemy, parcel)
+}
+
+/** §5.3 product over enemies (partner excluded by the caller). */
+export function raceDiscount(dSelfP: number, enemies: EnemyThreat[], lambdaAgent: number, betaComp: number, _dc: DecayConsts): number {
+  let prod = 1
+  for (const e of enemies) prod *= 1 - grab(e.age, dSelfP, e.dToP, betaComp, lambdaAgent)
+  return prod
+}
+
+/** §5.3 P_avail = exists AND we win the race; 0 for any carried parcel. */
+export function pAvail(p: ParcelBelief, dSelfP: number, enemies: EnemyThreat[], betaComp: number, tnow: number, dc: DecayConsts): number {
+  if (p.carriedBy !== null) return 0
+  return psurv(p, tnow, dSelfP, dc) * raceDiscount(dSelfP, enemies, dc.lambdaAgent, betaComp, dc)
+}
+
+export const tileKey = (p: Pos): string => `${p.x},${p.y}`
