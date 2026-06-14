@@ -1,5 +1,5 @@
 // src/external/deliveroo.ts
-import type { IOConfig, IOTile, IOTileType } from '@unitn-asa/deliveroo-js-sdk'
+import type { IOConfig, IOTile } from '@unitn-asa/deliveroo-js-sdk'
 import type { GameConsts, Tile } from '../types/perception.js'
 
 const EVENT_MS: Record<string, number> = {
@@ -61,7 +61,8 @@ export interface LoggerLike {
   debug: (obj: Record<string, unknown> | string, msg?: string) => void
 }
 
-const ARROW_DIR: Record<string, Tile['dir']> = {
+type Arrow = '↑' | '↓' | '←' | '→'
+const ARROW_DIR: Record<Arrow, NonNullable<Tile['dir']>> = {
   '↑': 'up',
   '↓': 'down',
   '←': 'left',
