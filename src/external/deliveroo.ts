@@ -1,6 +1,6 @@
 // src/external/deliveroo.ts
-import type { IOConfig, IOTile } from '@unitn-asa/deliveroo-js-sdk'
-import type { GameConsts, Tile } from '../types/perception.js'
+import type { IOConfig, IOTile, IOSensing, IOAgent } from '@unitn-asa/deliveroo-js-sdk'
+import type { GameConsts, Tile, ParcelObs, AgentObs, CrateObs, SelfObs, PerceptionSnapshot } from '../types/perception.js'
 
 const EVENT_MS: Record<string, number> = {
   '1s': 1000,
@@ -101,4 +101,71 @@ export function normalizeTile(io: IOTile, logger: LoggerLike): Tile {
       return { pos, type: 'wall' }
     }
   }
+}
+
+function hasPos(e: { x?: number; y?: number }): e is { x: number; y: number } {
+  return typeof e.x === 'number' && typeof e.y === 'number'
+}
+
+/**
+ * Map an SDK sensing event to a domain PerceptionSnapshot. `me` is the latest
+ * `you` payload (own position; sensing does not report self). Trust boundary:
+ * entities missing id/coords are dropped (with a warn) rather than emitted
+ * malformed; agents out of view (no x/y) are dropped silently — that is the
+ * normal "not visible" case, not an error.
+ */
+export function normalizeSensing(
+  io: IOSensing,
+  me: IOAgent,
+  tick: number,
+  logger: LoggerLike,
+): PerceptionSnapshot {
+  const self: SelfObs = {
+    id: me.id,
+    name: me.name,
+    teamId: me.teamId,
+    pos: { x: me.x ?? 0, y: me.y ?? 0 },
+    score: me.score,
+  }
+
+  const parcels: ParcelObs[] = []
+  for (const p of io.parcels) {
+    if (!p.id || !hasPos(p)) {
+      logger.warn({ record: 'parcel' }, 'dropping malformed parcel record')
+      continue
+    }
+    parcels.push({
+      id: p.id,
+      pos: { x: p.x, y: p.y },
+      reward: p.reward,
+      carriedBy: p.carriedBy ?? null,
+    })
+  }
+
+  const agents: AgentObs[] = []
+  for (const a of io.agents) {
+    if (!a.id) {
+      logger.warn({ record: 'agent' }, 'dropping malformed agent record')
+      continue
+    }
+    if (!hasPos(a)) continue // out of view — normal, drop silently
+    agents.push({
+      id: a.id,
+      name: a.name,
+      teamId: a.teamId,
+      pos: { x: a.x, y: a.y },
+      score: a.score,
+    })
+  }
+
+  const crates: CrateObs[] = []
+  for (const c of io.crates) {
+    if (!c.id || !hasPos(c)) {
+      logger.warn({ record: 'crate' }, 'dropping malformed crate record')
+      continue
+    }
+    crates.push({ id: c.id, pos: { x: c.x, y: c.y } })
+  }
+
+  return { tick, self, parcels, agents, crates }
 }
