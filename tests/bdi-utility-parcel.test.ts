@@ -34,11 +34,22 @@ test('psurv decays with age + travel', () => {
 
 test('raceDiscount: a fresh closer enemy discounts; an equal/farther one does not', () => {
   const enemiesCloser = [{ age: 0, dToP: 1 }] // dSelf=5, dEnemy=1 => closer
-  expect(raceDiscount(5, enemiesCloser, dc.lambdaAgent, 0.7, dc)).toBeLessThan(1)
+  expect(raceDiscount(5, enemiesCloser, dc.lambdaAgent, 0.7)).toBeLessThan(1)
   const enemiesFarther = [{ age: 0, dToP: 9 }]
-  expect(raceDiscount(5, enemiesFarther, dc.lambdaAgent, 0.7, dc)).toBe(1) // clamp at 0
+  expect(raceDiscount(5, enemiesFarther, dc.lambdaAgent, 0.7)).toBe(1) // clamp at 0
 })
 
 test('pAvail is 0 for a carried parcel', () => {
   expect(pAvail(parcel({ carriedBy: 'enemy1' }), 1, [], 0.7, 0, dc)).toBe(0)
+})
+
+test('raceDiscount returns 1 with no enemies', () => {
+  expect(raceDiscount(5, [], dc.lambdaAgent, 0.7)).toBe(1)
+})
+
+test('rnow is constant and psurv is 1 under infinite decay', () => {
+  const inf: GameConsts = { ...CONSTS, PARCEL_DECAY_TICKS: Infinity }
+  const dcInf = decayConsts(inf)
+  expect(rnow(parcel(), 1000, dcInf)).toBe(10) // no decay
+  expect(psurv(parcel(), 0, 100, dcInf)).toBe(1) // always survives
 })

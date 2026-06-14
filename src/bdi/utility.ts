@@ -4,6 +4,7 @@
 // under decay and race conditions.
 import type { Pos } from '../types/perception.js'
 import type { GameConsts } from '../types/perception.js'
+import { posKey } from '../types/perception.js'
 import type { ParcelBelief } from '../blackboard/beliefs.js'
 
 export interface DecayConsts {
@@ -47,7 +48,7 @@ export interface EnemyThreat {
 }
 
 /** §5.3 product over enemies (partner excluded by the caller). */
-export function raceDiscount(dSelfP: number, enemies: EnemyThreat[], lambdaAgent: number, betaComp: number, _dc: DecayConsts): number {
+export function raceDiscount(dSelfP: number, enemies: EnemyThreat[], lambdaAgent: number, betaComp: number): number {
   let prod = 1
   for (const e of enemies) prod *= 1 - grab(e.age, dSelfP, e.dToP, betaComp, lambdaAgent)
   return prod
@@ -56,7 +57,8 @@ export function raceDiscount(dSelfP: number, enemies: EnemyThreat[], lambdaAgent
 /** §5.3 P_avail = exists AND we win the race; 0 for any carried parcel. */
 export function pAvail(p: ParcelBelief, dSelfP: number, enemies: EnemyThreat[], betaComp: number, tnow: number, dc: DecayConsts): number {
   if (p.carriedBy !== null) return 0
-  return psurv(p, tnow, dSelfP, dc) * raceDiscount(dSelfP, enemies, dc.lambdaAgent, betaComp, dc)
+  return psurv(p, tnow, dSelfP, dc) * raceDiscount(dSelfP, enemies, dc.lambdaAgent, betaComp)
 }
 
-export const tileKey = (p: Pos): string => `${p.x},${p.y}`
+/** Backward compatibility alias for posKey; canonical version lives in src/types/perception.ts. */
+export const tileKey = posKey
