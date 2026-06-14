@@ -234,3 +234,45 @@ test('receive ignores a blackboard message with a malformed payload', () => {
   b.receive(bad)
   expect(b.partnerLastSeenTick).toBe(-Infinity)
 })
+
+test('hello() emits a hello message addressed to the partner', () => {
+  const { log } = fakeLogger()
+  const sent: A2AMessage[] = []
+  const a = mkBB(SELF_A, 'liaison', 'courier', sent, log)
+  a.hello(7)
+  expect(sent).toHaveLength(1)
+  expect(sent[0].to).toBe('courier')
+  const msg = sent[0].payload as BlackboardMsg
+  expect(msg.kind).toBe('hello')
+  if (msg.kind === 'hello') expect(msg.tick).toBe(7)
+})
+
+test('receiving a hello triggers a snapshot reply carrying the survivor full base', () => {
+  const { log } = fakeLogger()
+  const sentSurvivor: A2AMessage[] = []
+  const survivor = mkBB(SELF_A, 'liaison', 'courier', sentSurvivor, log)
+  survivor.beliefs.foldPerception(snap(SELF_A, 100, [{ id: 'p1', pos: { x: 6, y: 5 }, reward: 9, carriedBy: null }]))
+  survivor.onTick(100) // ship + drain its own first delta
+  sentSurvivor.length = 0 // ignore that; focus on the hello reply
+  const hello: A2AMessage = { from: 'courier', to: 'liaison', type: 'blackboard', payload: { kind: 'hello', tick: 120 } }
+  survivor.receive(hello)
+  expect(sentSurvivor).toHaveLength(1)
+  const msg = sentSurvivor[0].payload as BlackboardMsg
+  expect(msg.kind).toBe('snapshot')
+  if (msg.kind === 'snapshot') expect(msg.base.parcels.upsert.map((p) => p.id)).toEqual(['p1'])
+})
+
+test('answering a hello does not drain the survivor pending delta', () => {
+  const { log } = fakeLogger()
+  const sent: A2AMessage[] = []
+  const survivor = mkBB(SELF_A, 'liaison', 'courier', sent, log)
+  survivor.beliefs.foldPerception(snap(SELF_A, 100, [{ id: 'p1', pos: { x: 6, y: 5 }, reward: 9, carriedBy: null }]))
+  const hello: A2AMessage = { from: 'courier', to: 'liaison', type: 'blackboard', payload: { kind: 'hello', tick: 120 } }
+  survivor.receive(hello) // snapshot reply, must NOT drain dirty
+  sent.length = 0
+  survivor.onTick(100) // the pending parcel delta must still ship
+  expect(sent).toHaveLength(1)
+  const msg = sent[0].payload as BlackboardMsg
+  expect(msg.kind).toBe('delta')
+  if (msg.kind === 'delta') expect(msg.delta.parcels.upsert.map((p) => p.id)).toEqual(['p1'])
+})

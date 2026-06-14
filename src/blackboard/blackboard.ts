@@ -151,6 +151,12 @@ export class Blackboard {
     }
   }
 
+  /** Call once on worker boot to announce (re)connection; the partner replies with a snapshot. */
+  hello(tick: number): void {
+    this.emit({ kind: 'hello', tick })
+    this.logger.debug({ kind: 'hello', agentId: this.self }, 'bb send')
+  }
+
   private emit(msg: BlackboardMsg): void {
     this.send({ from: this.self, to: this.partner, type: 'blackboard', payload: msg })
   }
