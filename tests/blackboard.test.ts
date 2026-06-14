@@ -10,7 +10,7 @@ import {
   type LoggerLike,
 } from '../src/blackboard/blackboard.js'
 import { BeliefBase, type Delta } from '../src/blackboard/beliefs.js'
-import type { GameConsts, Tile, SelfObs } from '../src/types/perception.js'
+import type { GameConsts, Tile, SelfObs, PerceptionSnapshot, ParcelObs } from '../src/types/perception.js'
 import type { A2AMessage } from '../src/types/a2a.js'
 
 const CONSTS: GameConsts = {
@@ -42,6 +42,20 @@ const emptyDelta = (): Delta => ({
   crates: { upsert: [] },
   self: null,
 })
+
+function snap(self: SelfObs, tick: number, parcels: ParcelObs[] = []): PerceptionSnapshot {
+  return {
+    tick,
+    self: { id: self.id, name: self.name, teamId: self.teamId, pos: self.pos, score: self.score },
+    parcels,
+    agents: [],
+    crates: [],
+  }
+}
+
+function payloads(sent: A2AMessage[]): BlackboardMsg[] {
+  return sent.map((m) => m.payload as BlackboardMsg)
+}
 
 test('constants have the spec defaults', () => {
   expect(HEARTBEAT_INTERVAL_TICKS).toBe(1)
@@ -81,4 +95,82 @@ test('partnerAlive is false before any contact', () => {
   })
   expect(bb.partnerLastSeenTick).toBe(-Infinity)
   expect(bb.partnerAlive(100)).toBe(false)
+})
+
+test('onTick ships a delta on material change and addresses it to the partner', () => {
+  const { log } = fakeLogger()
+  const sent: A2AMessage[] = []
+  const bb = new Blackboard(new BeliefBase(SELF_A, CONSTS, MAP), {
+    self: 'liaison',
+    partner: 'courier',
+    send: (m) => sent.push(m),
+    logger: log,
+  })
+  bb.beliefs.foldPerception(snap(SELF_A, 10, [{ id: 'p1', pos: { x: 6, y: 5 }, reward: 9, carriedBy: null }]))
+  bb.onTick(10)
+  expect(sent).toHaveLength(1)
+  expect(sent[0].from).toBe('liaison')
+  expect(sent[0].to).toBe('courier')
+  expect(sent[0].type).toBe('blackboard')
+  const msg = sent[0].payload as BlackboardMsg
+  expect(msg.kind).toBe('delta')
+  if (msg.kind === 'delta') {
+    expect(msg.tick).toBe(10)
+    expect(msg.delta.parcels.upsert.map((p) => p.id)).toEqual(['p1'])
+  }
+})
+
+test('onTick drains the base: a second onTick with no new observation does not re-ship the delta', () => {
+  const { log } = fakeLogger()
+  const sent: A2AMessage[] = []
+  const bb = new Blackboard(new BeliefBase(SELF_A, CONSTS, MAP), {
+    self: 'liaison',
+    partner: 'courier',
+    send: (m) => sent.push(m),
+    logger: log,
+    heartbeatInterval: 100,
+  })
+  bb.beliefs.foldPerception(snap(SELF_A, 10, [{ id: 'p1', pos: { x: 6, y: 5 }, reward: 9, carriedBy: null }]))
+  bb.onTick(10)
+  bb.onTick(10) // same tick, nothing new, heartbeat interval not reached
+  expect(payloads(sent).filter((m) => m.kind === 'delta')).toHaveLength(1)
+  expect(sent).toHaveLength(1)
+})
+
+test('onTick emits a heartbeat only once the interval since the last send has elapsed', () => {
+  const { log } = fakeLogger()
+  const sent: A2AMessage[] = []
+  const bb = new Blackboard(new BeliefBase(SELF_A, CONSTS, MAP), {
+    self: 'liaison',
+    partner: 'courier',
+    send: (m) => sent.push(m),
+    logger: log,
+    heartbeatInterval: 3,
+  })
+  bb.beliefs.foldPerception(snap(SELF_A, 10, [{ id: 'p1', pos: { x: 6, y: 5 }, reward: 9, carriedBy: null }]))
+  bb.onTick(10) // delta, lastSentTick = 10
+  bb.onTick(11) // 11-10=1 < 3 -> silent
+  bb.onTick(12) // 12-10=2 < 3 -> silent
+  expect(sent).toHaveLength(1)
+  bb.onTick(13) // 13-10=3 >= 3 -> heartbeat
+  expect(sent).toHaveLength(2)
+  const last = sent[1].payload as BlackboardMsg
+  expect(last.kind).toBe('heartbeat')
+  if (last.kind === 'heartbeat') expect(last.tick).toBe(13)
+})
+
+test('a delta send counts as a heartbeat (resets the silence clock)', () => {
+  const { log } = fakeLogger()
+  const sent: A2AMessage[] = []
+  const bb = new Blackboard(new BeliefBase(SELF_A, CONSTS, MAP), {
+    self: 'liaison',
+    partner: 'courier',
+    send: (m) => sent.push(m),
+    logger: log,
+    heartbeatInterval: 2,
+  })
+  bb.beliefs.foldPerception(snap(SELF_A, 10, [{ id: 'p1', pos: { x: 6, y: 5 }, reward: 9, carriedBy: null }]))
+  bb.onTick(10) // delta at 10
+  bb.onTick(11) // 11-10=1 < 2 -> silent, no redundant ping right after a delta
+  expect(sent).toHaveLength(1)
 })

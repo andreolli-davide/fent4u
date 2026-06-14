@@ -43,6 +43,17 @@ export function isEmptyDelta(d: Delta): boolean {
   )
 }
 
+/** Count of entities a delta carries — for the `n` field in debug logs. */
+function deltaCount(d: Delta): number {
+  return (
+    d.parcels.upsert.length +
+    d.parcels.remove.length +
+    d.agents.upsert.length +
+    d.crates.upsert.length +
+    (d.self === null ? 0 : 1)
+  )
+}
+
 /** Minimal structural guard for a Delta. Trust boundary is in-process structured-clone, so light. */
 function isDelta(d: unknown): boolean {
   if (typeof d !== 'object' || d === null) return false
@@ -94,6 +105,24 @@ export class Blackboard {
   /** Coarse degradation signal (§11). False before first contact (partnerLastSeenTick = -Infinity). */
   partnerAlive(tick: number): boolean {
     return tick - this.partnerLastSeenTick <= this.partnerTtl
+  }
+
+  /**
+   * Pump after BeliefBase.foldPerception + own-action calls each tick. Sole drainer of
+   * computeDelta. Ships a delta on material change, else heartbeats when silence exceeds
+   * the interval. A delta doubles as a liveness ping (it resets lastSentTick).
+   */
+  onTick(tick: number): void {
+    const d = this.beliefs.computeDelta()
+    if (!isEmptyDelta(d)) {
+      this.emit({ kind: 'delta', tick, delta: d })
+      this.lastSentTick = tick
+      this.logger.debug({ kind: 'delta', n: deltaCount(d), agentId: this.self }, 'bb send')
+    } else if (tick - this.lastSentTick >= this.heartbeatInterval) {
+      this.emit({ kind: 'heartbeat', tick })
+      this.lastSentTick = tick
+      this.logger.debug({ kind: 'heartbeat', agentId: this.self }, 'bb send')
+    }
   }
 
   private emit(msg: BlackboardMsg): void {
