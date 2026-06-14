@@ -81,8 +81,13 @@ export function vValue(parcels: ParcelBelief[], z: Pos, L: number, tnow: number,
 }
 
 /**
- * §6.1 reactive subset choice on a delivery tile. With m≡1 the best bundle is all
- * positive-Rnow carried parcels (no carry cap, value monotone in set).
+ * §6.1 reactive subset choice on a delivery tile. With m≡1 (default) the best
+ * bundle is all positive-Rnow carried parcels — value is monotone in set size.
+ *
+ * NOTE: `m` and `g` shapers only affect the returned `value` computation, NOT
+ * subset selection. Full argmax over subsets (sorted-prefix search) is deferred
+ * to when mission shapers land (§6.1). Do not pass a non-identity `m` expecting
+ * an optimal subset to be chosen.
  */
 export function deliverBundle(carried: ParcelBelief[], tile: Pos, tnow: number, dc: DecayConsts, m: CountShaper = M1, g: ZoneShaper = G1): { set: ParcelBelief[]; value: number } {
   const set = carried.filter((p) => rnow(p, tnow, dc) > 0)
@@ -91,7 +96,12 @@ export function deliverBundle(carried: ParcelBelief[], tile: Pos, tnow: number, 
 
 export interface ZonePick { zone: Pos; L: number; rate: number }
 
-/** §6.0 value-aware zone selection: argmax of the travel-decayed kernel rate. */
+/**
+ * §6.0 value-aware zone selection: argmax of the travel-decayed kernel rate.
+ * @param dist - distance function; must return `Infinity` (not `NaN`) for
+ *   unreachable tiles. Infinite-distance zones are skipped; NaN distances are
+ *   also skipped (coincidental, not guaranteed).
+ */
 export function bestZone(parcels: ParcelBelief[], from: Pos, zones: Pos[], tnow: number, dc: DecayConsts, dist: (a: Pos, b: Pos) => number, alpha: number, m: CountShaper = M1, g: ZoneShaper = G1): ZonePick | null {
   let best: ZonePick | null = null
   for (const z of zones) {
