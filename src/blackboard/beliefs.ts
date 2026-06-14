@@ -295,6 +295,11 @@ export class BeliefBase {
     // intentionally does NOT touch the dirty accumulator (no echo)
   }
 
+  /**
+   * Full-base snapshot for cold-start / reconnect hydration (§2.3.5): every
+   * record as an upsert, no removes. Same live-reference caveat as computeDelta —
+   * the caller must serialize/ship before the next belief mutation.
+   */
   computeSnapshot(): Delta {
     return {
       tick: this.lastTick,
