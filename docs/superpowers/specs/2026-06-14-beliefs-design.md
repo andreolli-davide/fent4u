@@ -219,10 +219,11 @@ one partner, so teamId matching is unambiguous.
 
 ```ts
 interface Delta {
+  tick:    number             // sender's current tick (last folded); stamps self→partner
   parcels: { upsert: ParcelBelief[]; remove: string[] }
   agents:  { upsert: AgentBelief[] }
   crates:  { upsert: CrateBelief[] }
-  self:    SelfBelief | null
+  self:    SelfBelief | null  // sender's OWN self; folded into receiver's agents as rel='partner'
 }
 ```
 
@@ -230,7 +231,17 @@ interface Delta {
   private `dirty` set. `computeDelta()` materializes the current records for those
   ids (and `self` if dirtied) into a `Delta`, then clears `dirty`. Between
   broadcasts, repeated touches to the same id collapse to one upsert — last write
-  wins, which is correct since the materialization reads current state.
+  wins, which is correct since the materialization reads current state. `Delta.tick`
+  is the base's `lastTick` (set by the most recent `foldPerception`), tracked so
+  own-action deltas (which carry no perception tick) still timestamp the partner's
+  view of self.
+- **Self → partner-agent on apply.** `Delta.self` is the **sender's** `SelfBelief`.
+  The receiver must never write it onto its own `self`. Instead `applyDelta` converts
+  it to an `AgentBelief{ id, pos, rel: 'partner', lastSeen: d.tick, carrying:
+  self.carrying }` and merges it into `agents` via `mergeByLastSeen` (§2.3.1: self is
+  published to the partner as a `rel='partner'` agent). This is the primary channel
+  by which each agent learns the other's position when out of view. `SelfBelief` has
+  no `lastSeen` of its own, which is exactly why `Delta.tick` exists.
 - **`applyDelta` symmetry.** Applying a remote delta routes every upsert through the
   same `mergeByLastSeen` helper used by `foldPerception`, and every `remove` through
   the same deletion path. One merge rule, exercised both directions →
@@ -240,8 +251,9 @@ interface Delta {
   equal `lastSeen` the records are identical game state (both agents read the same
   world at the same tick), so either is fine; pick `incoming` deterministically.
 - **Snapshot = full delta.** `computeSnapshot()` emits every stored record as an
-  upsert plus current `self`; `applySnapshot` is `applyDelta` over that. This serves
-  the §2.3.5 one-time cold-start / reconnect hydration.
+  upsert plus current `self` and `tick = lastTick`; `applySnapshot` is `applyDelta`
+  over that. This serves the §2.3.5 one-time cold-start / reconnect hydration, and
+  the same self→partner conversion applies.
 
 ---
 
