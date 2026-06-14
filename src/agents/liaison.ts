@@ -8,6 +8,7 @@ import type { Params } from '../bdi/params.js'
 
 let log: ReturnType<typeof makeLogger> | null = null
 let blackboard: Blackboard | null = null
+let booting = false
 
 function send(msg: A2AMessage): void {
   self.postMessage({ kind: 'a2a', data: msg } satisfies WorkerEnvelope)
@@ -33,14 +34,18 @@ async function boot(config: Config, params: Params): Promise<void> {
       blackboard.hello(snap.tick)
       booted = true
     }
-    void loop.tick(snap).then(() => blackboard?.onTick(snap.tick))
+    void loop.tick(snap)
+      .then(() => blackboard?.onTick(snap.tick))
+      .catch((err: unknown) => log?.error({ err }, 'tick error'))
   })
-  log.info({ tick: 0 }, 'Liaison BDI online')
+  log.info({}, 'Liaison BDI online')
 }
 
 self.onmessage = (event: MessageEvent<WorkerEnvelope>) => {
   const envelope = event.data
   if (envelope.kind === 'init') {
+    if (booting) return
+    booting = true
     void boot(envelope.config, envelope.params)
     return
   }
