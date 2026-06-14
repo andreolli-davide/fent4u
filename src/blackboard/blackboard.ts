@@ -123,6 +123,7 @@ export class Blackboard {
       this.lastSentTick = tick
       this.logger.debug({ kind: 'heartbeat', agentId: this.self }, 'bb send')
     }
+    this.checkLivenessEdge(tick)
   }
 
   /** Feed inbound a2a from the main relay. Ignores non-blackboard / malformed messages. */
@@ -155,6 +156,18 @@ export class Blackboard {
   hello(tick: number): void {
     this.emit({ kind: 'hello', tick })
     this.logger.debug({ kind: 'hello', agentId: this.self }, 'bb send')
+  }
+
+  /** Log the boolean edge of partnerAlive at `info` (a degradation event, §11). */
+  private checkLivenessEdge(tick: number): void {
+    const alive = this.partnerAlive(tick)
+    if (alive !== this.lastPartnerAlive) {
+      this.logger.info(
+        { event: alive ? 'partner-recovered' : 'partner-loss', partnerLastSeenTick: this.partnerLastSeenTick, tick },
+        'bb liveness',
+      )
+      this.lastPartnerAlive = alive
+    }
   }
 
   private emit(msg: BlackboardMsg): void {
