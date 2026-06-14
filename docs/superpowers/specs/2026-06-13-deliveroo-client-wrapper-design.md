@@ -87,6 +87,11 @@ export interface AgentObs  { id: string; name: string; teamId: string; pos: Pos;
 export interface CrateObs  { id: string; pos: Pos }
 export interface SelfObs   { id: string; name: string; teamId: string; pos: Pos; score: number }
 
+// Action result. The SDK's emitPickup/emitPutdown resolve to { id }[] only —
+// no pos/reward/carriedBy. The stateless wrapper passes these through verbatim;
+// the BDI belief base holds the full ParcelObs and looks up by id.
+export interface PickResult { id: string }
+
 export interface GameConsts {
   CLOCK: number              // ms per frame (top-level IOConfig.CLOCK), default 50
   MOVEMENT_DURATION: number  // GAME.player.movement_duration, default 50
@@ -137,8 +142,8 @@ export interface DeliverooClient {
 
   // actions (both roles) — thin typed pass-through; BDI owns sequencing
   move(dir: 'up' | 'down' | 'left' | 'right'): Promise<Pos | false>
-  pickup(): Promise<ParcelObs[]>
-  putdown(ids?: string[]): Promise<ParcelObs[]>
+  pickup(): Promise<PickResult[]>          // SDK returns { id }[] only (§3)
+  putdown(ids?: string[]): Promise<PickResult[]>
 
   // mission channel — present on the type, role-gated at runtime (liaison only)
   onMissionMsg(cb: (from: string, name: string, msg: unknown) => void): void
