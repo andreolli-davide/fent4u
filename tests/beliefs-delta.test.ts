@@ -103,3 +103,31 @@ test('mergeByLastSeen: stale remote upsert does not overwrite fresher local reco
   expect(b.parcels.get('p1')?.lastSeen).toBe(200) // fresher local kept
   expect(b.parcels.get('p1')?.rewardSeen).toBe(50)
 })
+
+test('computeSnapshot then applySnapshot hydrates an empty base to equality', () => {
+  const a = new BeliefBase(SELF_A, CONSTS, MAP)
+  a.foldPerception(
+    snap(SELF_A, {
+      tick: 150,
+      parcels: [{ id: 'p1', pos: { x: 6, y: 5 }, reward: 9, carriedBy: null }],
+      agents: [{ id: 'E', name: 'E', teamId: 'X', pos: { x: 7, y: 5 }, score: 0 }],
+      crates: [{ id: 'c1', pos: { x: 4, y: 5 } }],
+    }),
+  )
+  const fresh = new BeliefBase(SELF_B, CONSTS, MAP)
+  fresh.applySnapshot(a.computeSnapshot())
+  expect(fresh.parcels.get('p1')).toEqual(a.parcels.get('p1')!)
+  expect(fresh.crates.get('c1')).toEqual(a.crates.get('c1')!)
+  // enemy E replicated, and sender A folded in as partner
+  expect(fresh.agents.get('E')?.rel).toBe('enemy')
+  expect(fresh.agents.get('A')?.rel).toBe('partner')
+})
+
+test('computeSnapshot carries every record regardless of dirty state', () => {
+  const a = new BeliefBase(SELF_A, CONSTS, MAP)
+  a.foldPerception(snap(SELF_A, { tick: 150, parcels: [{ id: 'p1', pos: { x: 6, y: 5 }, reward: 9, carriedBy: null }] }))
+  a.computeDelta() // drains dirty
+  const s = a.computeSnapshot()
+  expect(s.parcels.upsert.map((p) => p.id)).toEqual(['p1']) // still present despite no dirt
+  expect(s.tick).toBe(150)
+})

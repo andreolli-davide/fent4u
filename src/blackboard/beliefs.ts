@@ -295,6 +295,20 @@ export class BeliefBase {
     // intentionally does NOT touch the dirty accumulator (no echo)
   }
 
+  computeSnapshot(): Delta {
+    return {
+      tick: this.lastTick,
+      parcels: { upsert: [...this.parcels.values()], remove: [] },
+      agents: { upsert: [...this.agents.values()] },
+      crates: { upsert: [...this.crates.values()] },
+      self: this.self,
+    }
+  }
+
+  applySnapshot(d: Delta): void {
+    this.applyDelta(d)
+  }
+
   private recomputeCarrying(): void {
     const carried: string[] = []
     for (const p of this.parcels.values()) {
