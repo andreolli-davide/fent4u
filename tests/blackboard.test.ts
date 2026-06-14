@@ -11,7 +11,7 @@ import {
 } from '../src/blackboard/blackboard.js'
 import { BeliefBase, type Delta } from '../src/blackboard/beliefs.js'
 import type { GameConsts, Tile, SelfObs, PerceptionSnapshot, ParcelObs } from '../src/types/perception.js'
-import type { A2AMessage } from '../src/types/a2a.js'
+import type { A2AMessage, AgentId as AgentIdT } from '../src/types/a2a.js'
 
 const CONSTS: GameConsts = {
   CLOCK: 50,
@@ -173,4 +173,64 @@ test('a delta send counts as a heartbeat (resets the silence clock)', () => {
   bb.onTick(10) // delta at 10
   bb.onTick(11) // 11-10=1 < 2 -> silent, no redundant ping right after a delta
   expect(sent).toHaveLength(1)
+})
+
+function mkBB(self: SelfObs, id: AgentIdT, partner: AgentIdT, sent: A2AMessage[], log: LoggerLike): Blackboard {
+  return new Blackboard(new BeliefBase(self, CONSTS, MAP), { self: id, partner, send: (m) => sent.push(m), logger: log })
+}
+
+test('receive(delta) applies the partner delta into the local base and refreshes liveness', () => {
+  const { log } = fakeLogger()
+  const sentA: A2AMessage[] = []
+  const sentB: A2AMessage[] = []
+  const a = mkBB(SELF_A, 'liaison', 'courier', sentA, log)
+  const b = mkBB(SELF_B, 'courier', 'liaison', sentB, log)
+  a.beliefs.foldPerception(snap(SELF_A, 100, [{ id: 'p1', pos: { x: 6, y: 5 }, reward: 9, carriedBy: null }]))
+  a.onTick(100)
+  b.receive(sentA[0])
+  expect(b.beliefs.parcels.get('p1')?.rewardSeen).toBe(9)
+  expect(b.partnerLastSeenTick).toBe(100)
+  expect(b.partnerAlive(101)).toBe(true)
+})
+
+test('receive(heartbeat) refreshes liveness only — no base mutation', () => {
+  const { log } = fakeLogger()
+  const sent: A2AMessage[] = []
+  const b = mkBB(SELF_B, 'courier', 'liaison', sent, log)
+  const beat: A2AMessage = { from: 'liaison', to: 'courier', type: 'blackboard', payload: { kind: 'heartbeat', tick: 42 } }
+  b.receive(beat)
+  expect(b.partnerLastSeenTick).toBe(42)
+  expect(b.beliefs.parcels.size).toBe(0)
+})
+
+test('receive(snapshot) applies the full base additively', () => {
+  const { log } = fakeLogger()
+  const sentA: A2AMessage[] = []
+  const sentB: A2AMessage[] = []
+  const a = mkBB(SELF_A, 'liaison', 'courier', sentA, log)
+  const b = mkBB(SELF_B, 'courier', 'liaison', sentB, log)
+  a.beliefs.foldPerception(snap(SELF_A, 100, [{ id: 'p1', pos: { x: 6, y: 5 }, reward: 9, carriedBy: null }]))
+  const base = a.beliefs.computeSnapshot()
+  const msg: A2AMessage = { from: 'liaison', to: 'courier', type: 'blackboard', payload: { kind: 'snapshot', tick: base.tick, base } }
+  b.receive(msg)
+  expect(b.beliefs.parcels.get('p1')?.rewardSeen).toBe(9)
+})
+
+test('receive ignores a foreign-channel message: no mutation, no liveness refresh', () => {
+  const { log } = fakeLogger()
+  const sent: A2AMessage[] = []
+  const b = mkBB(SELF_B, 'courier', 'liaison', sent, log)
+  const foreign: A2AMessage = { from: 'liaison', to: 'courier', type: 'auction-bid', payload: { parcelId: 'p9' } }
+  b.receive(foreign)
+  expect(b.partnerLastSeenTick).toBe(-Infinity)
+  expect(b.beliefs.parcels.size).toBe(0)
+})
+
+test('receive ignores a blackboard message with a malformed payload', () => {
+  const { log } = fakeLogger()
+  const sent: A2AMessage[] = []
+  const b = mkBB(SELF_B, 'courier', 'liaison', sent, log)
+  const bad: A2AMessage = { from: 'liaison', to: 'courier', type: 'blackboard', payload: { kind: 'delta', tick: 5 } }
+  b.receive(bad)
+  expect(b.partnerLastSeenTick).toBe(-Infinity)
 })
