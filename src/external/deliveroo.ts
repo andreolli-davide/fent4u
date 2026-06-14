@@ -13,12 +13,14 @@ const EVENT_MS: Record<string, number> = {
 
 /**
  * Convert a clock-event decay string to ticks-per-1-point-decay.
- * 'infinite' -> Infinity (no decay). Unknown string -> '1s' equivalent
- * (matches the SDK's parseClockEvent fallback). Mechanical only; utility.ts
- * owns the rate formulas (ρ/λ).
+ * 'infinite' -> Infinity (no decay). 'frame' -> 1 (decay every tick, i.e.
+ * every clock frame). Unknown string -> '1s' equivalent (matches the SDK's
+ * parseClockEvent fallback for genuinely invalid strings). Mechanical only;
+ * utility.ts owns the rate formulas (ρ/λ).
  */
 export function parseDecayEvent(ev: string, clockMs: number): number {
   if (ev === 'infinite') return Infinity
+  if (ev === 'frame') return 1 // decay every frame = 1 tick
   const ms = EVENT_MS[ev]
   if (ms === undefined) return EVENT_MS['1s'] / clockMs
   return ms / clockMs
