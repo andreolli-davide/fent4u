@@ -41,6 +41,9 @@ export function loadParams(path = 'config/params.yaml'): Params {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { ...DEFAULT_PARAMS }
     throw err
   }
+  if (raw !== null && raw !== undefined && (typeof raw !== 'object' || Array.isArray(raw))) {
+    throw new Error(`params file must be a YAML mapping, got ${typeof raw}`)
+  }
   const over = (raw ?? {}) as Record<string, unknown>
   const out: Params = { ...DEFAULT_PARAMS }
   for (const key of Object.keys(DEFAULT_PARAMS) as (keyof Params)[]) {
