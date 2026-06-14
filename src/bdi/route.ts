@@ -67,10 +67,11 @@ export function buildRoute(carried: ParcelBelief[], pool: ParcelBelief[], self: 
 
   if (current === null && carried.length === 0) {
     let seed: { route: Route; u: number; idx: number } | null = null
-    remaining.forEach((p, idx) => {
+    for (let idx = 0; idx < remaining.length; idx++) {
+      const p = remaining[idx]!
       const s = score(self, carried, [p], zones, tnow, dc, params, dist)
       if (s !== null && (seed === null || s.u > seed.u)) seed = { ...s, idx }
-    })
+    }
     if (seed === null) return null
     current = { route: seed.route, u: seed.u }
     remaining.splice(seed.idx, 1)
@@ -79,10 +80,11 @@ export function buildRoute(carried: ParcelBelief[], pool: ParcelBelief[], self: 
 
   for (;;) {
     let bestAdd: { route: Route; u: number; idx: number } | null = null
-    remaining.forEach((p, idx) => {
+    for (let idx = 0; idx < remaining.length; idx++) {
+      const p = remaining[idx]!
       const s = bestInsert(self, carried, current!.route.pickups, p, zones, tnow, dc, params, dist)
       if (s !== null && (bestAdd === null || s.u > bestAdd.u)) bestAdd = { ...s, idx }
-    })
+    }
     if (bestAdd === null || bestAdd.u <= current.u) break
     current = { route: bestAdd.route, u: bestAdd.u }
     remaining.splice(bestAdd.idx, 1)
