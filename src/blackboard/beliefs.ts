@@ -228,6 +228,64 @@ export class BeliefBase {
     this.recomputeCarrying()
   }
 
+  computeDelta(): Delta {
+    const parcelUpsert: ParcelBelief[] = []
+    for (const id of this.dirtyParcels) {
+      const p = this.parcels.get(id)
+      if (p) parcelUpsert.push(p)
+    }
+    const agentUpsert: AgentBelief[] = []
+    for (const id of this.dirtyAgents) {
+      const a = this.agents.get(id)
+      if (a) agentUpsert.push(a)
+    }
+    const crateUpsert: CrateBelief[] = []
+    for (const id of this.dirtyCrates) {
+      const c = this.crates.get(id)
+      if (c) crateUpsert.push(c)
+    }
+    const delta: Delta = {
+      tick: this.lastTick,
+      parcels: { upsert: parcelUpsert, remove: [...this.removedParcels] },
+      agents: { upsert: agentUpsert },
+      crates: { upsert: crateUpsert },
+      self: this.dirtySelf ? this.self : null,
+    }
+    this.dirtyParcels.clear()
+    this.removedParcels.clear()
+    this.dirtyAgents.clear()
+    this.dirtyCrates.clear()
+    this.dirtySelf = false
+    return delta
+  }
+
+  applyDelta(d: Delta): void {
+    for (const p of d.parcels.upsert) {
+      this.parcels.set(p.id, mergeByLastSeen(this.parcels.get(p.id), p))
+    }
+    for (const id of d.parcels.remove) {
+      this.parcels.delete(id)
+    }
+    for (const a of d.agents.upsert) {
+      this.agents.set(a.id, mergeByLastSeen(this.agents.get(a.id), a))
+    }
+    for (const c of d.crates.upsert) {
+      this.crates.set(c.id, mergeByLastSeen(this.crates.get(c.id), c))
+    }
+    if (d.self) {
+      // The sender's self is THIS receiver's partner — never our own self.
+      const partner: AgentBelief = {
+        id: d.self.id,
+        pos: d.self.pos,
+        rel: 'partner',
+        lastSeen: d.tick,
+        carrying: d.self.carrying,
+      }
+      this.agents.set(partner.id, mergeByLastSeen(this.agents.get(partner.id), partner))
+    }
+    // intentionally does NOT touch the dirty accumulator (no echo)
+  }
+
   private recomputeCarrying(): void {
     const carried: string[] = []
     for (const p of this.parcels.values()) {
