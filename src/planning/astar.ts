@@ -77,6 +77,7 @@ interface Node {
 export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResult {
   if (from.x === to.x && from.y === to.y) return { reachable: true, L: 0, firstStep: null, pushes: [] }
 
+  // budgetMs enforced in Task 3 (push-aware search); move-only search is fast enough to skip the guard
   const open = new Map<string, Node>()
   const closed = new Set<string>()
   const start: Node = { pos: from, g: 0, f: manhattan(from, to), firstStep: null }
@@ -99,7 +100,7 @@ export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResu
       const nk = key(np)
       if (closed.has(nk)) continue
       if (!isFloor(grid, np) || !canEnter(grid, np, dir)) continue
-      if (ctx.obstacles.crateAt.has(nk)) continue
+      if (ctx.obstacles.crateAt.has(nk)) continue // Task 3 adds push edges here; cratesAsWalls toggles fallback
       if (ctx.obstacles.agentAt.has(nk)) continue
       const g = cur.g + 1
       const existing = open.get(nk)
