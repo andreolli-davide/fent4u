@@ -2,13 +2,12 @@
 import type { DeliverooClient } from '../external/deliveroo.js'
 import type { PerceptionSnapshot, Pos, Tile } from '../types/perception.js'
 import { BeliefBase, type ParcelBelief } from '../blackboard/beliefs.js'
-import { buildGrid, buildObstacles, planPath, isPushAdmissible, type Grid, type PlanCtx } from '../planning/astar.js'
+import { buildGrid, buildObstacles, planPath, isPushAdmissible, type Grid, type PlanCtx, type Dir } from '../planning/astar.js'
 import { decayConsts, pAvail, deliverBundle, tileKey, type DecayConsts, type EnemyThreat } from './utility.js'
 import { buildRoute, uRoute } from './route.js'
-import { select, chooseExplore, type Intention, type Candidate } from './intentions.js'
+import { select, chooseExplore, matches, type Intention, type Candidate } from './intentions.js'
 import type { Params } from './params.js'
 
-type Dir = 'up' | 'down' | 'left' | 'right'
 type LogFn = (obj: Record<string, unknown>, msg?: string) => void
 
 export class BdiLoop {
@@ -55,7 +54,7 @@ export class BdiLoop {
     cands.push({ intention: { kind: 'idle' }, u: this.params.eps_idle })
 
     const chosen = select(cands, this.committed, this.params.h_commit)
-    if (this.committed === null || this.committed.kind !== chosen.kind) {
+    if (!matches(this.committed, chosen)) {
       this.log({ from: this.committed?.kind ?? 'none', to: chosen.kind, tick: tnow }, 'intent switch')
     }
     this.committed = chosen
@@ -72,7 +71,11 @@ export class BdiLoop {
 
   private planCtx(beliefs: BeliefBase): PlanCtx {
     const obstacles = buildObstacles([...beliefs.crates.values()], [...beliefs.agents.values()])
-    const protectedTiles: Pos[] = [beliefs.self.pos, ...this.grid.deliveryZones, ...[...beliefs.parcels.values()].map((p) => p.pos)]
+    const protectedTiles: Pos[] = [
+      beliefs.self.pos,
+      ...this.grid.deliveryZones,
+      ...[...beliefs.parcels.values()].filter((p) => p.carriedBy === null).map((p) => p.pos),
+    ]
     return { obstacles, protectedTiles, budgetMs: this.params.push_plan_budget_ms }
   }
 
