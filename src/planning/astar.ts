@@ -131,7 +131,7 @@ interface Node {
 export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResult {
   if (from.x === to.x && from.y === to.y) return { reachable: true, L: 0, firstStep: null, pushes: [] }
 
-  // budgetMs enforced in Task 3 (push-aware search); move-only search is fast enough to skip the guard
+  const deadline = performance.now() + ctx.budgetMs
   const usedPushDest = new Set<string>()
   const open = new Map<string, Node>()
   const closed = new Set<string>()
@@ -142,6 +142,7 @@ export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResu
     let cur: Node | null = null
     for (const n of open.values()) if (cur === null || n.f < cur.f) cur = n
     if (cur === null) break
+    if (performance.now() > deadline) return { reachable: false, L: Infinity, firstStep: null, pushes: [] }
     const ck = key(cur.pos)
     open.delete(ck)
     closed.add(ck)

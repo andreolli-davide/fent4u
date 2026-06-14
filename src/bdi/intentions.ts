@@ -43,15 +43,15 @@ export function matches(committed: Intention | null, cand: Intention): boolean {
  * `cands`. `select` hard-codes a fallback `idle` intention for safety, but relies
  * on the caller to provide the `eps_idle` floor so utility comparisons are fair.
  */
-export function select(cands: Candidate[], committed: Intention | null, hCommit: number): Intention {
-  let best: Intention = { kind: 'idle' }
+export function select(cands: Candidate[], committed: Intention | null, hCommit: number): Candidate {
+  let best: Candidate = { intention: { kind: 'idle' }, u: 0 }
   let bestScore = -Infinity
   for (const c of cands) {
     if (c.u <= 0) continue
     const score = c.u * (matches(committed, c.intention) ? 1 + hCommit : 1)
     if (score > bestScore) {
       bestScore = score
-      best = c.intention
+      best = c
     }
   }
   return best
