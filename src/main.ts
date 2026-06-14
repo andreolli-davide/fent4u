@@ -4,8 +4,10 @@ import { parseConfig } from './types/config.js'
 import { makeLogger } from './logger.js'
 import { relay } from './relay.js'
 import type { AgentId, WorkerEnvelope } from './types/a2a.js'
+import { loadParams } from './bdi/params.js'
 
 const config = parseConfig(Bun.env)
+const params = loadParams() // reads config/params.yaml, falls back to defaults
 
 mkdirSync(config.LOG_DIR, { recursive: true })
 const logPath = join(config.LOG_DIR, `session-${Date.now()}.ndjson`)
@@ -40,8 +42,8 @@ courier.addEventListener('message', handleMessage('courier'))
 liaison.addEventListener('error', (e) => log.error({ err: e.message }, 'liaison worker error'))
 courier.addEventListener('error', (e) => log.error({ err: e.message }, 'courier worker error'))
 
-liaison.postMessage({ kind: 'init', config } satisfies WorkerEnvelope)
-courier.postMessage({ kind: 'init', config } satisfies WorkerEnvelope)
+liaison.postMessage({ kind: 'init', config, params } satisfies WorkerEnvelope)
+courier.postMessage({ kind: 'init', config, params } satisfies WorkerEnvelope)
 
 log.info({ logPath }, 'fent4u started — both workers spawned')
 
