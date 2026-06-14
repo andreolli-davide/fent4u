@@ -195,6 +195,39 @@ export class BeliefBase {
     this.recomputeCarrying()
   }
 
+  applyPickup(ids: string[]): void {
+    for (const id of ids) {
+      const p = this.parcels.get(id)
+      if (p) {
+        p.carriedBy = this.self.id
+        this.dirtyParcels.add(id)
+      }
+    }
+    this.recomputeCarrying()
+  }
+
+  applyDelivery(ids: string[]): void {
+    for (const id of ids) {
+      if (this.parcels.delete(id)) {
+        this.dirtyParcels.delete(id)
+        this.removedParcels.add(id)
+      }
+    }
+    this.recomputeCarrying()
+  }
+
+  applyDrop(ids: string[], pos: Pos): void {
+    for (const id of ids) {
+      const p = this.parcels.get(id)
+      if (p) {
+        p.carriedBy = null
+        p.pos = pos
+        this.dirtyParcels.add(id)
+      }
+    }
+    this.recomputeCarrying()
+  }
+
   private recomputeCarrying(): void {
     const carried: string[] = []
     for (const p of this.parcels.values()) {
