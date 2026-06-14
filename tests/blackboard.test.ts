@@ -276,3 +276,29 @@ test('answering a hello does not drain the survivor pending delta', () => {
   expect(msg.kind).toBe('delta')
   if (msg.kind === 'delta') expect(msg.delta.parcels.upsert.map((p) => p.id)).toEqual(['p1'])
 })
+
+test('onTick logs partner-recovered on first contact and partner-loss after the TTL lapses', () => {
+  const { log, infos } = fakeLogger()
+  const sent: A2AMessage[] = []
+  const bb = new Blackboard(new BeliefBase(SELF_A, CONSTS, MAP), {
+    self: 'liaison',
+    partner: 'courier',
+    send: (m) => sent.push(m),
+    logger: log,
+    partnerTtl: 5,
+    heartbeatInterval: 100,
+  })
+  // no contact yet -> still considered lost, no edge logged
+  bb.onTick(1)
+  expect(infos).toHaveLength(0)
+  // partner speaks at tick 10
+  bb.receive({ from: 'courier', to: 'liaison', type: 'blackboard', payload: { kind: 'heartbeat', tick: 10 } })
+  bb.onTick(11) // 11-10=1 <= 5 -> alive -> edge: recovered
+  expect(infos.map((o) => o.event)).toEqual(['partner-recovered'])
+  // silence: 17-10=7 > 5 -> lost
+  bb.onTick(17)
+  expect(infos.map((o) => o.event)).toEqual(['partner-recovered', 'partner-loss'])
+  // no duplicate edge while still lost
+  bb.onTick(18)
+  expect(infos).toHaveLength(2)
+})
