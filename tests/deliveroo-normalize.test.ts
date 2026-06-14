@@ -140,3 +140,18 @@ test('normalizeSensing drops a malformed parcel record but keeps the rest', () =
   ])
   expect(warns.length).toBe(1)
 })
+
+test('normalizeSensing warns and drops an agent missing its id', () => {
+  const { logger, warns } = spyLogger()
+  const io = {
+    positions: [],
+    agents: [
+      { name: 'NoId', teamId: 't', teamName: 'T', x: 1, y: 1, score: 0, penalty: 0 },
+    ],
+    parcels: [],
+    crates: [],
+  } as unknown as IOSensing
+  const snap = normalizeSensing(io, selfMe, 1, logger)
+  expect(snap.agents).toEqual([])
+  expect(warns.length).toBe(1)
+})
