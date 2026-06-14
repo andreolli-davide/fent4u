@@ -302,3 +302,52 @@ test('onTick logs partner-recovered on first contact and partner-loss after the 
   bb.onTick(18)
   expect(infos).toHaveLength(2)
 })
+
+test('two wired blackboards converge: a parcel A observes appears in B base', () => {
+  const { log } = fakeLogger()
+  let b: Blackboard
+  const a = new Blackboard(new BeliefBase(SELF_A, CONSTS, MAP), {
+    self: 'liaison',
+    partner: 'courier',
+    send: (m) => b.receive(m),
+    logger: log,
+  })
+  b = new Blackboard(new BeliefBase(SELF_B, CONSTS, MAP), {
+    self: 'courier',
+    partner: 'liaison',
+    send: (m) => a.receive(m),
+    logger: log,
+  })
+  a.beliefs.foldPerception(snap(SELF_A, 100, [{ id: 'p1', pos: { x: 6, y: 5 }, reward: 9, carriedBy: null }]))
+  a.onTick(100)
+  expect(b.beliefs.parcels.get('p1')?.rewardSeen).toBe(9)
+  expect(b.partnerAlive(101)).toBe(true)
+})
+
+test('reconnect: a freshly-booted agent hello triggers a snapshot that hydrates its empty base', () => {
+  const { log } = fakeLogger()
+  // survivor already holds rich state
+  let fresh: Blackboard | undefined
+  const survivor = new Blackboard(new BeliefBase(SELF_A, CONSTS, MAP), {
+    self: 'liaison',
+    partner: 'courier',
+    // fresh is not booted yet: its live delta is dropped (the cold-start premise),
+    // and the guard avoids touching `fresh` before it is assigned.
+    send: (m) => {
+      if (fresh !== undefined) fresh.receive(m)
+    },
+    logger: log,
+  })
+  survivor.beliefs.foldPerception(snap(SELF_A, 200, [{ id: 'p7', pos: { x: 6, y: 5 }, reward: 4, carriedBy: null }]))
+  survivor.onTick(200) // delta is dropped — fresh not up yet
+  // fresh agent boots empty, announces itself
+  fresh = new Blackboard(new BeliefBase(SELF_B, CONSTS, MAP), {
+    self: 'courier',
+    partner: 'liaison',
+    send: (m) => survivor.receive(m),
+    logger: log,
+  })
+  expect(fresh.beliefs.parcels.size).toBe(0)
+  fresh.hello(205) // survivor replies with a snapshot
+  expect(fresh.beliefs.parcels.get('p7')?.rewardSeen).toBe(4)
+})
