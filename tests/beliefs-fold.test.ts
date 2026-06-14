@@ -149,3 +149,28 @@ test('agents are never evicted regardless of age', () => {
   b.foldPerception(snap({ tick: 9999, agents: [] }))
   expect(b.agents.has('e')).toBe(true)
 })
+
+test('applyPickup sets carriedBy to self and updates carrying', () => {
+  const b = new BeliefBase(SELF0, CONSTS, MAP)
+  b.foldPerception(snap({ parcels: [{ id: 'p1', pos: { x: 5, y: 5 }, reward: 10, carriedBy: null }] }))
+  b.applyPickup(['p1'])
+  expect(b.parcels.get('p1')?.carriedBy).toBe('me')
+  expect(b.self.carrying).toEqual(['p1'])
+})
+
+test('applyDelivery deletes delivered parcels and clears carrying', () => {
+  const b = new BeliefBase(SELF0, CONSTS, MAP)
+  b.foldPerception(snap({ parcels: [{ id: 'p1', pos: { x: 5, y: 5 }, reward: 10, carriedBy: 'me' }] }))
+  b.applyDelivery(['p1'])
+  expect(b.parcels.has('p1')).toBe(false)
+  expect(b.self.carrying).toEqual([])
+})
+
+test('applyDrop nulls carriedBy and repositions at drop tile', () => {
+  const b = new BeliefBase(SELF0, CONSTS, MAP)
+  b.foldPerception(snap({ parcels: [{ id: 'p1', pos: { x: 5, y: 5 }, reward: 10, carriedBy: 'me' }] }))
+  b.applyDrop(['p1'], { x: 3, y: 3 })
+  expect(b.parcels.get('p1')?.carriedBy).toBeNull()
+  expect(b.parcels.get('p1')?.pos).toEqual({ x: 3, y: 3 })
+  expect(b.self.carrying).toEqual([])
+})
