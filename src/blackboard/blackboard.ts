@@ -125,6 +125,32 @@ export class Blackboard {
     }
   }
 
+  /** Feed inbound a2a from the main relay. Ignores non-blackboard / malformed messages. */
+  receive(msg: A2AMessage): void {
+    if (msg.type !== 'blackboard' || !isBlackboardMsg(msg.payload)) return
+    const bb = msg.payload
+    this.partnerLastSeenTick = Math.max(this.partnerLastSeenTick, bb.tick)
+    switch (bb.kind) {
+      case 'hello': {
+        const base = this.beliefs.computeSnapshot()
+        this.emit({ kind: 'snapshot', tick: base.tick, base })
+        this.logger.debug({ kind: 'snapshot', n: deltaCount(base), agentId: this.self }, 'bb send')
+        break
+      }
+      case 'snapshot':
+        this.beliefs.applySnapshot(bb.base)
+        this.logger.debug({ kind: 'snapshot', n: deltaCount(bb.base), agentId: this.self }, 'bb recv')
+        break
+      case 'delta':
+        this.beliefs.applyDelta(bb.delta)
+        this.logger.debug({ kind: 'delta', n: deltaCount(bb.delta), agentId: this.self }, 'bb recv')
+        break
+      case 'heartbeat':
+        this.logger.debug({ kind: 'heartbeat', agentId: this.self }, 'bb recv')
+        break
+    }
+  }
+
   private emit(msg: BlackboardMsg): void {
     this.send({ from: this.self, to: this.partner, type: 'blackboard', payload: msg })
   }
