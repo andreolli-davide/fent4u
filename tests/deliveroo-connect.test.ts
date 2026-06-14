@@ -66,10 +66,6 @@ function makeFakeSocket() {
   let youCb: ((m: IOAgent) => void) | null = null
   let pingCb: ((d: IOPing, ack: () => void) => void) | null = null
   const socket = {
-    me: Promise.resolve(me),
-    config: Promise.resolve(ioConfig),
-    map: Promise.resolve({ width: 3, height: 1, tiles }),
-    token: Promise.resolve('tok'),
     onConnect: () => {},
     onDisconnect: () => {},
     onYou: (cb: (m: IOAgent) => void) => {
@@ -81,6 +77,11 @@ function makeFakeSocket() {
     onMsg: () => {},
     on: (event: string, cb: (...args: unknown[]) => void) => {
       if (event === 'ping') pingCb = cb as (d: IOPing, ack: () => void) => void
+    },
+    once: (event: string, cb: (...args: unknown[]) => void) => {
+      if (event === 'you') void Promise.resolve(me).then((v) => cb(v))
+      else if (event === 'config') void Promise.resolve(ioConfig).then((v) => cb(v))
+      else if (event === 'map') void Promise.resolve({ width: 3, height: 1, tiles }).then(({ width, height, tiles: t }) => cb(width, height, t))
     },
     emitMove: async () => ({ x: 1, y: 0 }),
     emitPickup: async () => [{ id: 'p1' }],
@@ -169,12 +170,13 @@ test('liaison can use the mission channel', async () => {
 test('move resolving false passes through as a normal outcome (not thrown, not logged)', async () => {
   const { logger, warns } = spyLogger()
   const socket = {
-    me: Promise.resolve(me),
-    config: Promise.resolve(ioConfig),
-    map: Promise.resolve({ width: 3, height: 1, tiles }),
-    token: Promise.resolve('tok'),
     onConnect: () => {}, onDisconnect: () => {}, onYou: () => {}, onSensing: () => {},
     onMsg: () => {}, on: () => {},
+    once: (event: string, cb: (...args: unknown[]) => void) => {
+      if (event === 'you') void Promise.resolve(me).then((v) => cb(v))
+      else if (event === 'config') void Promise.resolve(ioConfig).then((v) => cb(v))
+      else if (event === 'map') void Promise.resolve({ width: 3, height: 1, tiles }).then(({ width, height, tiles: t }) => cb(width, height, t))
+    },
     emitMove: async () => false as const,
     emitPickup: async () => [], emitPutdown: async () => [],
     emitSay: async () => 'successful' as const, emitAsk: async () => ({}), emitShout: async () => ({}),
@@ -188,12 +190,13 @@ test('move resolving false passes through as a normal outcome (not thrown, not l
 test('action rejection is logged at warn and propagates to the caller', async () => {
   const { logger, warns } = spyLogger()
   const socket = {
-    me: Promise.resolve(me),
-    config: Promise.resolve(ioConfig),
-    map: Promise.resolve({ width: 3, height: 1, tiles }),
-    token: Promise.resolve('tok'),
     onConnect: () => {}, onDisconnect: () => {}, onYou: () => {}, onSensing: () => {},
     onMsg: () => {}, on: () => {},
+    once: (event: string, cb: (...args: unknown[]) => void) => {
+      if (event === 'you') void Promise.resolve(me).then((v) => cb(v))
+      else if (event === 'config') void Promise.resolve(ioConfig).then((v) => cb(v))
+      else if (event === 'map') void Promise.resolve({ width: 3, height: 1, tiles }).then(({ width, height, tiles: t }) => cb(width, height, t))
+    },
     emitMove: async () => { throw new Error('ack timeout') },
     emitPickup: async () => [], emitPutdown: async () => [],
     emitSay: async () => 'successful' as const, emitAsk: async () => ({}), emitShout: async () => ({}),
@@ -207,12 +210,13 @@ test('action rejection is logged at warn and propagates to the caller', async ()
 test('close() disconnects the socket', async () => {
   let disconnected = false
   const socket = {
-    me: Promise.resolve(me),
-    config: Promise.resolve(ioConfig),
-    map: Promise.resolve({ width: 3, height: 1, tiles }),
-    token: Promise.resolve('tok'),
     onConnect: () => {}, onDisconnect: () => {}, onYou: () => {}, onSensing: () => {},
     onMsg: () => {}, on: () => {},
+    once: (event: string, cb: (...args: unknown[]) => void) => {
+      if (event === 'you') void Promise.resolve(me).then((v) => cb(v))
+      else if (event === 'config') void Promise.resolve(ioConfig).then((v) => cb(v))
+      else if (event === 'map') void Promise.resolve({ width: 3, height: 1, tiles }).then(({ width, height, tiles: t }) => cb(width, height, t))
+    },
     emitMove: async () => false as const, emitPickup: async () => [], emitPutdown: async () => [],
     emitSay: async () => 'successful' as const, emitAsk: async () => ({}), emitShout: async () => ({}),
     disconnect() { disconnected = true; return this },
@@ -225,15 +229,16 @@ test('close() disconnects the socket', async () => {
 test('liaison onMissionMsg receives delivered messages', async () => {
   let msgCb: ((id: string, name: string, msg: unknown, reply: (a: unknown) => void) => void) | null = null
   const socket = {
-    me: Promise.resolve(me),
-    config: Promise.resolve(ioConfig),
-    map: Promise.resolve({ width: 3, height: 1, tiles }),
-    token: Promise.resolve('tok'),
     onConnect: () => {}, onDisconnect: () => {}, onYou: () => {}, onSensing: () => {},
     onMsg: (cb: (id: string, name: string, msg: unknown, reply: (a: unknown) => void) => void) => {
       msgCb = cb
     },
     on: () => {},
+    once: (event: string, cb: (...args: unknown[]) => void) => {
+      if (event === 'you') void Promise.resolve(me).then((v) => cb(v))
+      else if (event === 'config') void Promise.resolve(ioConfig).then((v) => cb(v))
+      else if (event === 'map') void Promise.resolve({ width: 3, height: 1, tiles }).then(({ width, height, tiles: t }) => cb(width, height, t))
+    },
     emitMove: async () => false as const, emitPickup: async () => [], emitPutdown: async () => [],
     emitSay: async () => 'successful' as const, emitAsk: async () => ({}), emitShout: async () => ({}),
     disconnect() { return this },
