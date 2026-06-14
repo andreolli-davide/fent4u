@@ -8,7 +8,11 @@ import { buildRoute, uRoute } from './route.js'
 import { select, chooseExplore, matches, type Intention, type Candidate } from './intentions.js'
 import type { Params } from './params.js'
 
-type LogFn = (obj: Record<string, unknown>, msg?: string) => void
+type LogFn = {
+  info: (obj: Record<string, unknown>, msg?: string) => void
+  debug: (obj: Record<string, unknown>, msg?: string) => void
+  warn: (obj: Record<string, unknown>, msg?: string) => void
+}
 
 export class BdiLoop {
   private readonly grid: Grid
@@ -17,6 +21,7 @@ export class BdiLoop {
   private readonly seenAt = new Map<string, number>()
   private beliefs: BeliefBase | null = null
   private committed: Intention | null = null
+  private committedU = 0
   private acting = false
 
   constructor(
@@ -53,14 +58,16 @@ export class BdiLoop {
     if (ex !== null) cands.push(ex)
     cands.push({ intention: { kind: 'idle' }, u: this.params.eps_idle })
 
-    const chosen = select(cands, this.committed, this.params.h_commit)
+    const chosenCand = select(cands, this.committed, this.params.h_commit)
+    const chosen = chosenCand.intention
     if (!matches(this.committed, chosen)) {
-      this.log({ from: this.committed?.kind ?? 'none', to: chosen.kind, tick: tnow }, 'intent switch')
+      this.log.info({ from: this.committed?.kind ?? 'none', to: chosen.kind, uFrom: this.committedU, uTo: chosenCand.u, tick: tnow }, 'intent switch')
     }
     this.committed = chosen
+    this.committedU = chosenCand.u
 
     await this.act(chosen, beliefs, ctx, tnow)
-    this.log({ durationMs: performance.now() - t0, tick: tnow }, 'tick')
+    this.log.debug({ durationMs: performance.now() - t0, tick: tnow }, 'tick')
   }
 
   /** Lazily construct (once) and return the shared belief base for the blackboard to replicate. */

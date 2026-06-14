@@ -13,7 +13,7 @@ test('argmax picks the highest utility', () => {
     { intention: explore, u: 1 },
     { intention: idle, u: 0.001 },
   ]
-  expect(select(cands, null, DEFAULT_PARAMS.h_commit).kind).toBe('route')
+  expect(select(cands, null, DEFAULT_PARAMS.h_commit).intention.kind).toBe('route')
 })
 
 test('h_commit bonus flips a near-tie toward the committed intention', () => {
@@ -22,9 +22,9 @@ test('h_commit bonus flips a near-tie toward the committed intention', () => {
     { intention: explore, u: 1.1 }, // explore is nominally higher
   ]
   // not committed: explore wins
-  expect(select(cands, null, 0.15).kind).toBe('explore')
+  expect(select(cands, null, 0.15).intention.kind).toBe('explore')
   // committed to route: 1.0*1.15=1.15 > 1.1 => route wins
-  expect(select(cands, routeA, 0.15).kind).toBe('route')
+  expect(select(cands, routeA, 0.15).intention.kind).toBe('route')
 })
 
 test('U<=0 candidates are dropped; idle floor survives', () => {
@@ -32,7 +32,7 @@ test('U<=0 candidates are dropped; idle floor survives', () => {
     { intention: routeA, u: -1 },
     { intention: idle, u: 0.001 },
   ]
-  expect(select(cands, null, 0.15).kind).toBe('idle')
+  expect(select(cands, null, 0.15).intention.kind).toBe('idle')
 })
 
 test('matches: same route head pickup is the same commitment', () => {

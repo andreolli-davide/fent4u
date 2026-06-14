@@ -26,7 +26,11 @@ async function boot(config: Config, params: Params): Promise<void> {
   }
   const client = await connect(config, 'courier', logger)
 
-  const loop = new BdiLoop(client, params, (obj, msg) => log!.info(obj, msg))
+  const loop = new BdiLoop(client, params, {
+    info: (obj, msg) => log!.info(obj as object, msg),
+    debug: (obj, msg) => log!.debug(obj as object, msg),
+    warn: (obj, msg) => log!.warn(obj as object, msg),
+  })
   let booted = false
   client.onPerception((snap) => {
     if (!booted) {

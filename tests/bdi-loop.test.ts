@@ -42,21 +42,21 @@ const snap = (over: Partial<PerceptionSnapshot>): PerceptionSnapshot => ({
 
 test('steps toward a visible parcel', async () => {
   const rec = fakeClient(rowMap())
-  const loop = new BdiLoop(rec.client, DEFAULT_PARAMS, () => {})
+  const loop = new BdiLoop(rec.client, DEFAULT_PARAMS, { info: () => {}, debug: () => {}, warn: () => {} })
   await loop.tick(snap({ parcels: [{ id: 'p1', pos: { x: 4, y: 0 }, reward: 10, carriedBy: null }] }))
   expect(rec.moves).toEqual(['right']) // self at (3,0), parcel at (4,0)
 })
 
 test('picks up when standing on the parcel', async () => {
   const rec = fakeClient(rowMap())
-  const loop = new BdiLoop(rec.client, DEFAULT_PARAMS, () => {})
+  const loop = new BdiLoop(rec.client, DEFAULT_PARAMS, { info: () => {}, debug: () => {}, warn: () => {} })
   await loop.tick(snap({ self: { id: 'me', name: 'me', teamId: 'A', pos: { x: 4, y: 0 }, score: 0 }, parcels: [{ id: 'p1', pos: { x: 4, y: 0 }, reward: 10, carriedBy: null }] }))
   expect(rec.pickups).toBe(1)
 })
 
 test('explores when nothing is visible and not carrying', async () => {
   const rec = fakeClient(rowMap())
-  const loop = new BdiLoop(rec.client, DEFAULT_PARAMS, () => {})
+  const loop = new BdiLoop(rec.client, DEFAULT_PARAMS, { info: () => {}, debug: () => {}, warn: () => {} })
   await loop.tick(snap({ parcels: [] }))
   // No spawner tiles in rowMap(), so chooseExplore returns null → idle → no move
   expect(rec.moves.length).toBe(0)
