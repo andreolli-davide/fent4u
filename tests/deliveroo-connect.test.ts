@@ -221,3 +221,30 @@ test('close() disconnects the socket', async () => {
   client.close()
   expect(disconnected).toBe(true)
 })
+
+test('liaison onMissionMsg receives delivered messages', async () => {
+  let msgCb: ((id: string, name: string, msg: unknown, reply: (a: unknown) => void) => void) | null = null
+  const socket = {
+    me: Promise.resolve(me),
+    config: Promise.resolve(ioConfig),
+    map: Promise.resolve({ width: 3, height: 1, tiles }),
+    token: Promise.resolve('tok'),
+    onConnect: () => {}, onDisconnect: () => {}, onYou: () => {}, onSensing: () => {},
+    onMsg: (cb: (id: string, name: string, msg: unknown, reply: (a: unknown) => void) => void) => {
+      msgCb = cb
+    },
+    on: () => {},
+    emitMove: async () => false as const, emitPickup: async () => [], emitPutdown: async () => [],
+    emitSay: async () => 'successful' as const, emitAsk: async () => ({}), emitShout: async () => ({}),
+    disconnect() { return this },
+  } as unknown as DjsClientSocket
+  const client = await connect(fakeConfig, 'liaison', noopLogger, () => socket)
+
+  const received: Array<{ from: string; name: string; msg: unknown }> = []
+  client.onMissionMsg((from, name, msg) => {
+    received.push({ from, name, msg })
+  })
+  msgCb!('agentX', 'Liaison X', { hello: 'world' }, () => {})
+
+  expect(received).toEqual([{ from: 'agentX', name: 'Liaison X', msg: { hello: 'world' } }])
+})

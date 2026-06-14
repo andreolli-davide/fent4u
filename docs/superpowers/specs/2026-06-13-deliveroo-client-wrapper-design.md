@@ -127,7 +127,8 @@ push (DESIGN §15 admissibility invariant re-checks live state anyway).
 ## 4. Public API
 
 ```ts
-export type Role = 'liaison' | 'courier'
+// Role is defined in src/types/perception.ts (domain type) and imported here
+type Role = 'liaison' | 'courier'
 
 export interface DeliverooClient {
   readonly role: Role

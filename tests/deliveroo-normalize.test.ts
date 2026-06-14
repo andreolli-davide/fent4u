@@ -155,3 +155,28 @@ test('normalizeSensing warns and drops an agent missing its id', () => {
   expect(snap.agents).toEqual([])
   expect(warns.length).toBe(1)
 })
+
+test('normalizeSensing warns and drops a crate missing its id', () => {
+  const { logger, warns } = spyLogger()
+  const io = {
+    positions: [],
+    agents: [],
+    parcels: [],
+    crates: [
+      { id: 'c1', x: 1, y: 1 },
+      { x: 2, y: 2 }, // missing id
+    ],
+  } as unknown as IOSensing
+  const snap = normalizeSensing(io, selfMe, 1, logger)
+  expect(snap.crates).toEqual([{ id: 'c1', pos: { x: 1, y: 1 } }])
+  expect(warns.length).toBe(1)
+})
+
+test('normalizeSensing warns when self has no position and falls back to (0,0)', () => {
+  const { logger, warns } = spyLogger()
+  const noPosMe = { id: 'self1', name: 'C', teamId: 't', teamName: 'T', score: 0, penalty: 0 } as unknown as IOAgent
+  const io: IOSensing = { positions: [], agents: [], parcels: [], crates: [] }
+  const snap = normalizeSensing(io, noPosMe, 7, logger)
+  expect(snap.self.pos).toEqual({ x: 0, y: 0 })
+  expect(warns.length).toBe(1)
+})
