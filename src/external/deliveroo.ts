@@ -1,6 +1,6 @@
 // src/external/deliveroo.ts
-import type { IOConfig } from '@unitn-asa/deliveroo-js-sdk'
-import type { GameConsts } from '../types/perception.js'
+import type { IOConfig, IOTile, IOTileType } from '@unitn-asa/deliveroo-js-sdk'
+import type { GameConsts, Tile } from '../types/perception.js'
 
 const EVENT_MS: Record<string, number> = {
   '1s': 1000,
@@ -52,4 +52,52 @@ export function tickFrom(
   clockMs: number,
 ): number {
   return anchorFrame + Math.floor((nowMs - anchorWallMs) / clockMs)
+}
+
+/** The slice of a pino Logger the pure functions need. */
+export interface LoggerLike {
+  warn: (obj: Record<string, unknown> | string, msg?: string) => void
+  info: (obj: Record<string, unknown> | string, msg?: string) => void
+  debug: (obj: Record<string, unknown> | string, msg?: string) => void
+}
+
+const ARROW_DIR: Record<string, Tile['dir']> = {
+  '↑': 'up',
+  '↓': 'down',
+  '←': 'left',
+  '→': 'right',
+}
+
+/**
+ * Map an SDK tile to a domain Tile. Unknown type chars become `wall` (safe by
+ * default: a wall blocks pathing and can never trigger an unsafe crate push;
+ * DESIGN §15 re-checks admissibility against live state anyway).
+ */
+export function normalizeTile(io: IOTile, logger: LoggerLike): Tile {
+  const pos = { x: io.x, y: io.y }
+  switch (io.type) {
+    case '0':
+      return { pos, type: 'wall' }
+    case '1':
+      return { pos, type: 'spawner' }
+    case '2':
+      return { pos, type: 'delivery' }
+    case '3':
+      return { pos, type: 'walkable' }
+    case '4':
+      return { pos, type: 'base' }
+    case '5':
+      return { pos, type: 'slide' }
+    case '5!':
+      return { pos, type: 'crateSpawner' }
+    case '↑':
+    case '↓':
+    case '←':
+    case '→':
+      return { pos, type: 'oneway', dir: ARROW_DIR[io.type] }
+    default: {
+      logger.warn({ type: io.type, pos }, 'unknown tile type, defaulting to wall')
+      return { pos, type: 'wall' }
+    }
+  }
 }
