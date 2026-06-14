@@ -1,6 +1,9 @@
 // src/external/deliveroo.ts
+import { DjsConnect } from '@unitn-asa/deliveroo-js-sdk'
+import type { DjsClientSocket } from '@unitn-asa/deliveroo-js-sdk'
 import type { IOConfig, IOTile, IOSensing, IOAgent } from '@unitn-asa/deliveroo-js-sdk'
-import type { GameConsts, Tile, ParcelObs, AgentObs, CrateObs, SelfObs, PerceptionSnapshot } from '../types/perception.js'
+import type { GameConsts, Tile, ParcelObs, AgentObs, CrateObs, SelfObs, PerceptionSnapshot, Pos, PickResult, Role } from '../types/perception.js'
+import type { Config } from '../types/config.js'
 
 const EVENT_MS: Record<string, number> = {
   '1s': 1000,
@@ -171,4 +174,113 @@ export function normalizeSensing(
   }
 
   return { tick, self, parcels, agents, crates }
+}
+
+export interface DeliverooClient {
+  readonly role: Role
+  readonly consts: GameConsts
+  readonly map: Tile[]
+  tick(): number
+
+  onPerception(cb: (s: PerceptionSnapshot) => void): void
+  onConnect(cb: () => void): void
+  onDisconnect(cb: (reason: string) => void): void
+
+  move(dir: 'up' | 'down' | 'left' | 'right'): Promise<Pos | false>
+  pickup(): Promise<PickResult[]>
+  putdown(ids?: string[]): Promise<PickResult[]>
+
+  onMissionMsg(cb: (from: string, name: string, msg: unknown) => void): void
+  say(toId: string, msg: unknown): Promise<'successful' | 'failed'>
+  ask(toId: string, msg: unknown): Promise<unknown>
+  shout(msg: unknown): Promise<unknown>
+
+  close(): void
+}
+
+function missionOnly(): never {
+  throw new Error('mission channel: liaison only')
+}
+
+/**
+ * Connect to the Deliveroo server and return a typed, role-aware client.
+ * Awaits the SDK one-shot promises (me/config/map) so the returned client is
+ * fully initialized: self id, GameConsts, and tile map are all present.
+ *
+ * `connectFn` is injectable for testing; production callers pass three args and
+ * hit the real DjsConnect.
+ */
+export async function connect(
+  config: Config,
+  role: Role,
+  logger: LoggerLike,
+  connectFn: typeof DjsConnect = DjsConnect,
+): Promise<DeliverooClient> {
+  const token = role === 'liaison' ? config.TOKEN_LIAISON : config.TOKEN_COURIER
+  const host = `${config.DELIVEROO_HOST}:${config.DELIVEROO_PORT}`
+  const socket: DjsClientSocket = connectFn(host, token, '', true)
+
+  // await startup one-shots
+  const [me0, ioConfig, mapResult] = await Promise.all([socket.me, socket.config, socket.map])
+  const consts = buildConsts(ioConfig)
+  const map = mapResult.tiles.map((t) => normalizeTile(t, logger))
+
+  // transient transport bookkeeping (not a belief cache): latest self position
+  let me = me0
+  socket.onYou((m) => {
+    me = m
+  })
+
+  // tick anchor
+  let anchorFrame = 0
+  let anchorWallMs = Date.now()
+  socket.on('ping', (data) => {
+    anchorFrame = data.frame
+    anchorWallMs = Date.now()
+  })
+  const tick = (): number => tickFrom(anchorFrame, anchorWallMs, Date.now(), consts.CLOCK)
+
+  // perception
+  let perceptionCb: ((s: PerceptionSnapshot) => void) | null = null
+  socket.onSensing((io) => {
+    if (!perceptionCb) return
+    perceptionCb(normalizeSensing(io, me, tick(), logger))
+  })
+
+  // lifecycle
+  socket.onConnect(() => logger.info({ role }, 'connected'))
+  socket.onDisconnect((reason) => logger.info({ role, reason }, 'disconnected'))
+
+  // mission channel is wired inline below, and ONLY for liaison — courier never
+  // calls socket.onMsg (see the role ternaries).
+
+  return {
+    role,
+    consts,
+    map,
+    tick,
+
+    onPerception: (cb) => {
+      perceptionCb = cb
+    },
+    onConnect: (cb) => socket.onConnect(cb),
+    onDisconnect: (cb) => socket.onDisconnect(cb),
+
+    move: (dir) => socket.emitMove(dir),
+    pickup: () => socket.emitPickup(),
+    putdown: (ids) => socket.emitPutdown(ids),
+
+    onMissionMsg:
+      role === 'liaison'
+        ? (cb) => socket.onMsg((id, name, msg) => cb(id, name, msg))
+        : missionOnly,
+    say: role === 'liaison' ? (toId, msg) => socket.emitSay(toId, msg) : missionOnly,
+    ask: role === 'liaison' ? (toId, msg) => socket.emitAsk(toId, msg) : missionOnly,
+    shout: role === 'liaison' ? (msg) => socket.emitShout(msg) : missionOnly,
+
+    close: () => {
+      socket.disconnect()
+      logger.info({ role }, 'client closed')
+    },
+  }
 }
