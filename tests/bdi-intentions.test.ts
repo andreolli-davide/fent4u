@@ -5,7 +5,7 @@ import type { Pos } from '../src/types/perception.js'
 
 const idle: Intention = { kind: 'idle' }
 const routeA: Intention = { kind: 'route', route: { pickups: [{ id: 'p1', pos: { x: 1, y: 0 }, rewardSeen: 10, carriedBy: null, lastSeen: 0 }], zone: { x: 0, y: 0 }, delivered: [], L: 2 } }
-const explore: Intention = { kind: 'explore', target: { tile: { x: 9, y: 9 }, score: 1 } }
+const explore: Intention = { kind: 'explore', target: { tile: { x: 9, y: 9 }, staleness: 1 } }
 
 test('argmax picks the highest utility', () => {
   const cands: Candidate[] = [
@@ -36,7 +36,8 @@ test('U<=0 candidates are dropped; idle floor survives', () => {
 })
 
 test('matches: same route head pickup is the same commitment', () => {
-  const routeA2: Intention = { kind: 'route', route: { ...((routeA as { route: { pickups: unknown } }).route as never), L: 3 } as never }
+  const base = (routeA as Extract<Intention, { kind: 'route' }>).route
+  const routeA2: Intention = { kind: 'route', route: { ...base, L: 3 } }
   expect(matches(routeA, routeA2)).toBe(true)
 })
 
@@ -45,5 +46,19 @@ test('chooseExplore picks the stalest reachable spawner', () => {
   const seenAt = new Map<string, number>([['2,0', 100]]) // (2,0) seen recently; (8,0) never
   const dist = (a: Pos, b: Pos): number => Math.abs(a.x - b.x)
   const t = chooseExplore(spawners, seenAt, { x: 0, y: 0 }, 100, dist, DEFAULT_PARAMS)
-  expect(t?.intention.target.tile).toEqual({ x: 8, y: 0 })
+  const exploreIntent = t?.intention as Extract<Intention, { kind: 'explore' }> | undefined
+  expect(exploreIntent?.target.tile).toEqual({ x: 8, y: 0 })
+})
+
+test('matches returns false when committed is null', () => {
+  expect(matches(null, idle)).toBe(false)
+})
+
+test('matches returns false when kinds differ', () => {
+  expect(matches(routeA, explore)).toBe(false)
+})
+
+test('chooseExplore returns null when all spawners unreachable', () => {
+  const infDist = (_a: Pos, _b: Pos): number => Infinity
+  expect(chooseExplore([{ x: 5, y: 5 }], new Map(), { x: 0, y: 0 }, 0, infDist, DEFAULT_PARAMS)).toBeNull()
 })
