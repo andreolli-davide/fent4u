@@ -228,6 +228,15 @@ export class BeliefBase {
     this.recomputeCarrying()
   }
 
+  /**
+   * Materialize the dirty accumulator into a Delta, then clear it. NOTE: the
+   * returned Delta holds LIVE references to the base's records (and `self`), not
+   * copies. The caller MUST serialize/ship the Delta (e.g. postMessage, which
+   * structured-clones) before the base is next mutated by foldPerception or an
+   * apply* method — otherwise the emitted Delta would change retroactively.
+   * In production this holds: blackboard.ts clones across the Worker boundary
+   * synchronously at ship time, before the next BDI tick.
+   */
   computeDelta(): Delta {
     const parcelUpsert: ParcelBelief[] = []
     for (const id of this.dirtyParcels) {
