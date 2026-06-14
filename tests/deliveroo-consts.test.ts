@@ -16,9 +16,14 @@ test('parseDecayEvent: infinite -> Infinity', () => {
   expect(parseDecayEvent('infinite', 50)).toBe(Infinity)
 })
 
-test('parseDecayEvent: unknown string falls back to 1s equivalent', () => {
-  expect(parseDecayEvent('frame', 50)).toBe(20) // '1s' fallback at CLOCK=50
+test('parseDecayEvent: frame -> 1 tick (decay every frame)', () => {
+  expect(parseDecayEvent('frame', 50)).toBe(1)
+  expect(parseDecayEvent('frame', 100)).toBe(1)
+})
+
+test('parseDecayEvent: genuinely unknown string falls back to 1s equivalent', () => {
   expect(parseDecayEvent('banana', 50)).toBe(20)
+  expect(parseDecayEvent('', 50)).toBe(20)
 })
 
 test('buildConsts assembles GameConsts from IOConfig', () => {
