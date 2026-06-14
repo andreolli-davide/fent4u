@@ -120,6 +120,9 @@ export function normalizeSensing(
   tick: number,
   logger: LoggerLike,
 ): PerceptionSnapshot {
+  if (typeof me.x !== 'number' || typeof me.y !== 'number') {
+    logger.warn({ record: 'self', tick }, 'self position missing; using (0,0) — pathing may be wrong')
+  }
   const self: SelfObs = {
     id: me.id,
     name: me.name,
@@ -131,7 +134,7 @@ export function normalizeSensing(
   const parcels: ParcelObs[] = []
   for (const p of io.parcels) {
     if (!p.id || !hasPos(p)) {
-      logger.warn({ record: 'parcel' }, 'dropping malformed parcel record')
+      logger.warn({ record: 'parcel', tick }, 'dropping malformed parcel record')
       continue
     }
     parcels.push({
@@ -145,7 +148,7 @@ export function normalizeSensing(
   const agents: AgentObs[] = []
   for (const a of io.agents) {
     if (!a.id) {
-      logger.warn({ record: 'agent' }, 'dropping malformed agent record')
+      logger.warn({ record: 'agent', tick }, 'dropping malformed agent record')
       continue
     }
     if (!hasPos(a)) continue // out of view — normal, drop silently
@@ -161,7 +164,7 @@ export function normalizeSensing(
   const crates: CrateObs[] = []
   for (const c of io.crates) {
     if (!c.id || !hasPos(c)) {
-      logger.warn({ record: 'crate' }, 'dropping malformed crate record')
+      logger.warn({ record: 'crate', tick }, 'dropping malformed crate record')
       continue
     }
     crates.push({ id: c.id, pos: { x: c.x, y: c.y } })
