@@ -39,6 +39,60 @@ const DIRS: { dir: Dir; dx: number; dy: number }[] = [
   { dir: 'right', dx: 1, dy: 0 },
 ]
 
+const DELTA: Record<Dir, { dx: number; dy: number }> = {
+  up: { dx: 0, dy: -1 },
+  down: { dx: 0, dy: 1 },
+  left: { dx: -1, dy: 0 },
+  right: { dx: 1, dy: 0 },
+}
+
+function isType5(grid: Grid, p: Pos): boolean {
+  const t = grid.tiles.get(key(p))
+  return t !== undefined && (t.type === 'slide' || t.type === 'crateSpawner')
+}
+
+function connectivityPreserved(grid: Grid, ctx: PlanCtx, vacated: Pos, occupied: Pos): boolean {
+  if (ctx.protectedTiles.length < 2) return true
+  const vk = key(vacated)
+  const ok = key(occupied)
+  const blocked = (p: Pos): boolean => {
+    const k = key(p)
+    if (k === ok) return true
+    if (k === vk) return false
+    return ctx.obstacles.crateAt.has(k)
+  }
+  const passable = (p: Pos): boolean => {
+    const t = grid.tiles.get(key(p))
+    return t !== undefined && t.type !== 'wall' && !blocked(p)
+  }
+  const seen = new Set<string>()
+  const stack: Pos[] = [ctx.protectedTiles[0]]
+  seen.add(key(ctx.protectedTiles[0]))
+  while (stack.length > 0) {
+    const p = stack.pop()!
+    for (const { dx, dy } of Object.values(DELTA)) {
+      const np = { x: p.x + dx, y: p.y + dy }
+      const nk = key(np)
+      if (seen.has(nk) || !passable(np)) continue
+      seen.add(nk)
+      stack.push(np)
+    }
+  }
+  return ctx.protectedTiles.every((t) => seen.has(key(t)))
+}
+
+export function isPushAdmissible(grid: Grid, ctx: PlanCtx, cratePos: Pos, dir: Dir): boolean {
+  const beyond = { x: cratePos.x + DELTA[dir].dx, y: cratePos.y + DELTA[dir].dy }
+  const bk = key(beyond)
+  const crate = ctx.obstacles.crateAt.get(key(cratePos))
+  if (crate === undefined) return false
+  if (crate.locked) return false
+  if (!isType5(grid, beyond)) return false // clause 1: type-5
+  if (ctx.obstacles.crateAt.has(bk)) return false // clause 1: crate-free
+  if (ctx.obstacles.agentAt.has(bk)) return false // clause 2: no agent on destination
+  return connectivityPreserved(grid, ctx, cratePos, beyond) // clause 3
+}
+
 export function buildGrid(map: Tile[]): Grid {
   const tiles = new Map<string, GridTile>()
   const deliveryZones: Pos[] = []
@@ -92,7 +146,14 @@ export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResu
     closed.add(ck)
 
     if (cur.pos.x === to.x && cur.pos.y === to.y) {
-      return { reachable: true, L: cur.g, firstStep: cur.firstStep, pushes: [] }
+      const pushes: PlannedPush[] = []
+      if (cur.firstStep?.kind === 'push') {
+        const fp = cur.firstStep
+        const d0 = DELTA[fp.dir]
+        const cratePos = { x: from.x + d0.dx, y: from.y + d0.dy }
+        pushes.push({ crateId: fp.crateId, from: cratePos, to: { x: cratePos.x + d0.dx, y: cratePos.y + d0.dy }, tickOffset: 0 })
+      }
+      return { reachable: true, L: cur.g, firstStep: cur.firstStep, pushes }
     }
 
     for (const { dir, dx, dy } of DIRS) {
@@ -100,8 +161,20 @@ export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResu
       const nk = key(np)
       if (closed.has(nk)) continue
       if (!isFloor(grid, np) || !canEnter(grid, np, dir)) continue
-      if (ctx.obstacles.crateAt.has(nk)) continue // Task 3 adds push edges here; cratesAsWalls toggles fallback
       if (ctx.obstacles.agentAt.has(nk)) continue
+      if (ctx.obstacles.crateAt.has(nk)) {
+        // crate ahead: try an admissible push (skip when in crates-as-walls fallback)
+        if (ctx.cratesAsWalls) continue
+        if (!isPushAdmissible(grid, ctx, np, dir)) continue
+        const crate = ctx.obstacles.crateAt.get(nk)!
+        const g = cur.g + 1
+        const existing = open.get(nk)
+        if (existing !== undefined && existing.g <= g) continue
+        const push: Step = { kind: 'push', dir, crateId: crate.id }
+        const firstStep: Step = cur.firstStep ?? push
+        open.set(nk, { pos: np, g, f: g + manhattan(np, to), firstStep })
+        continue
+      }
       const g = cur.g + 1
       const existing = open.get(nk)
       if (existing !== undefined && existing.g <= g) continue
