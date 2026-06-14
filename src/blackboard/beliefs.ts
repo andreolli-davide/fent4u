@@ -124,7 +124,7 @@ export class BeliefBase {
       teamId: snap.self.teamId,
       pos: snap.self.pos,
       score: snap.self.score,
-      carrying: this.self.carrying,
+      carrying: this.self.carrying, // placeholder; recomputeCarrying() rewrites below
     }
 
     // 2. parcels — upsert
@@ -154,7 +154,43 @@ export class BeliefBase {
       this.dirtyCrates.add(c.id)
     }
 
-    // (steps 3, 6, 7 — removals/eviction — added in Task 3)
+    const mePos = this.self.pos
+    const perceivedParcels = new Set(snap.parcels.map((p) => p.id))
+    const perceivedCrates = new Set(snap.crates.map((c) => c.id))
+
+    // 3. parcels — delete in-range but no longer perceived (gone from the world)
+    for (const [id, p] of this.parcels) {
+      if (!perceivedParcels.has(id) && inRange(mePos, p.pos, obs)) {
+        this.parcels.delete(id)
+        this.dirtyParcels.delete(id)
+        this.removedParcels.add(id)
+      }
+    }
+
+    // 6. crates — KNOWN whose in-range tile is now empty => pushed off; go UNKNOWN
+    for (const [id, c] of this.crates) {
+      if (c.state === 'known' && c.pos && !perceivedCrates.has(id) && inRange(mePos, c.pos, obs)) {
+        this.crates.set(id, {
+          id,
+          state: 'unknown',
+          pos: undefined,
+          candidates: crateCandidates(this.tileIndex, c.pos),
+          locked: c.locked,
+          lastSeen: t,
+        })
+        this.dirtyCrates.add(id)
+      }
+    }
+
+    // 7. evict stale parcels (Infinity decay => never). Agents/crates never evicted.
+    const ttl = STALE_TTL_INTERVALS * this.consts.PARCEL_DECAY_TICKS
+    for (const [id, p] of this.parcels) {
+      if (t - p.lastSeen > ttl) {
+        this.parcels.delete(id)
+        this.dirtyParcels.delete(id)
+        this.removedParcels.add(id)
+      }
+    }
 
     this.recomputeCarrying()
   }
