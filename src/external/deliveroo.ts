@@ -222,8 +222,19 @@ export async function connect(
   const host = `${config.DELIVEROO_HOST}:${config.DELIVEROO_PORT}`
   const socket: DjsClientSocket = connectFn(host, token, '', true)
 
-  // await startup one-shots
-  const [me0, ioConfig, mapResult] = await Promise.all([socket.me, socket.config, socket.map])
+  // await startup one-shots — socket.me/config/map are instance field Promises in DjsClientSocket,
+  // but DjsConnect uses enhance() which only copies prototype methods, so those fields are undefined.
+  // Wire up the events directly via the underlying EventEmitter instead.
+  const sock = socket as unknown as { once(ev: string, cb: (...a: unknown[]) => void): void }
+  const [me0, ioConfig, mapResult] = await Promise.all([
+    new Promise<IOAgent>((res) => sock.once('you', (agent) => res(agent as IOAgent))),
+    new Promise<IOConfig>((res) => sock.once('config', (cfg) => res(cfg as IOConfig))),
+    new Promise<{ width: number; height: number; tiles: IOTile[] }>((res) =>
+      sock.once('map', (width, height, tiles) =>
+        res({ width: width as number, height: height as number, tiles: tiles as IOTile[] })
+      )
+    ),
+  ])
   const consts = buildConsts(ioConfig)
   const map = mapResult.tiles.map((t) => normalizeTile(t, logger))
 
