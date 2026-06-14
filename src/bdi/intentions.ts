@@ -5,7 +5,8 @@ import { rate, tileKey } from './utility.js'
 
 export interface ExploreTarget {
   tile: Pos
-  score: number
+  /** ticks since this spawner was last observed; tnow if never seen */
+  staleness: number
 }
 
 export type Intention =
@@ -35,7 +36,13 @@ export function matches(committed: Intention | null, cand: Intention): boolean {
   return false
 }
 
-/** §9.9 four-candidate argmax (three this slice) with commitment hysteresis. Idle floor must be present. */
+/**
+ * §9.9 four-candidate argmax (three this slice) with commitment hysteresis.
+ *
+ * CALLER CONTRACT: always include `{ intention: idle, u: params.eps_idle }` in
+ * `cands`. `select` hard-codes a fallback `idle` intention for safety, but relies
+ * on the caller to provide the `eps_idle` floor so utility comparisons are fair.
+ */
 export function select(cands: Candidate[], committed: Intention | null, hCommit: number): Intention {
   let best: Intention = { kind: 'idle' }
   let bestScore = -Infinity
@@ -64,7 +71,7 @@ export function chooseExplore(spawners: Pos[], seenAt: Map<string, number>, self
     const staleness = lastSeen === undefined ? tnow : tnow - lastSeen
     const value = params.theta_explore * (1 + params.kappa_info * staleness)
     const u = rate(value, dd, params.alpha)
-    if (best === null || u > best.u) best = { target: { tile: s, score: staleness }, u }
+    if (best === null || u > best.u) best = { target: { tile: s, staleness }, u }
   }
   return best === null ? null : { intention: { kind: 'explore', target: best.target }, u: best.u }
 }
