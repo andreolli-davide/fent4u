@@ -18,6 +18,20 @@ const noopLogger = {
   debug: () => {},
 }
 
+function spyLogger() {
+  const warns: unknown[][] = []
+  return {
+    logger: {
+      warn: (...a: unknown[]) => {
+        warns.push(a)
+      },
+      info: () => {},
+      debug: () => {},
+    },
+    warns,
+  }
+}
+
 const fakeConfig: Config = {
   DELIVEROO_HOST: 'http://localhost',
   DELIVEROO_PORT: 8080,
@@ -150,4 +164,60 @@ test('liaison can use the mission channel', async () => {
   const { socket } = makeFakeSocket()
   const client = await connect(fakeConfig, 'liaison', noopLogger, () => socket)
   expect(await client.say('x', 'hi')).toBe('successful')
+})
+
+test('move resolving false passes through as a normal outcome (not thrown, not logged)', async () => {
+  const { logger, warns } = spyLogger()
+  const socket = {
+    me: Promise.resolve(me),
+    config: Promise.resolve(ioConfig),
+    map: Promise.resolve({ width: 3, height: 1, tiles }),
+    token: Promise.resolve('tok'),
+    onConnect: () => {}, onDisconnect: () => {}, onYou: () => {}, onSensing: () => {},
+    onMsg: () => {}, on: () => {},
+    emitMove: async () => false as const,
+    emitPickup: async () => [], emitPutdown: async () => [],
+    emitSay: async () => 'successful' as const, emitAsk: async () => ({}), emitShout: async () => ({}),
+    disconnect() { return this },
+  } as unknown as DjsClientSocket
+  const client = await connect(fakeConfig, 'courier', logger, () => socket)
+  expect(await client.move('up')).toBe(false)
+  expect(warns.length).toBe(0)
+})
+
+test('action rejection is logged at warn and propagates to the caller', async () => {
+  const { logger, warns } = spyLogger()
+  const socket = {
+    me: Promise.resolve(me),
+    config: Promise.resolve(ioConfig),
+    map: Promise.resolve({ width: 3, height: 1, tiles }),
+    token: Promise.resolve('tok'),
+    onConnect: () => {}, onDisconnect: () => {}, onYou: () => {}, onSensing: () => {},
+    onMsg: () => {}, on: () => {},
+    emitMove: async () => { throw new Error('ack timeout') },
+    emitPickup: async () => [], emitPutdown: async () => [],
+    emitSay: async () => 'successful' as const, emitAsk: async () => ({}), emitShout: async () => ({}),
+    disconnect() { return this },
+  } as unknown as DjsClientSocket
+  const client = await connect(fakeConfig, 'courier', logger, () => socket)
+  await expect(client.move('up')).rejects.toThrow('ack timeout')
+  expect(warns.length).toBe(1)
+})
+
+test('close() disconnects the socket', async () => {
+  let disconnected = false
+  const socket = {
+    me: Promise.resolve(me),
+    config: Promise.resolve(ioConfig),
+    map: Promise.resolve({ width: 3, height: 1, tiles }),
+    token: Promise.resolve('tok'),
+    onConnect: () => {}, onDisconnect: () => {}, onYou: () => {}, onSensing: () => {},
+    onMsg: () => {}, on: () => {},
+    emitMove: async () => false as const, emitPickup: async () => [], emitPutdown: async () => [],
+    emitSay: async () => 'successful' as const, emitAsk: async () => ({}), emitShout: async () => ({}),
+    disconnect() { disconnected = true; return this },
+  } as unknown as DjsClientSocket
+  const client = await connect(fakeConfig, 'courier', noopLogger, () => socket)
+  client.close()
+  expect(disconnected).toBe(true)
 })

@@ -182,6 +182,7 @@ export interface DeliverooClient {
   readonly map: Tile[]
   tick(): number
 
+  // single consumer (the BDI loop); a second call replaces the first callback
   onPerception(cb: (s: PerceptionSnapshot) => void): void
   onConnect(cb: () => void): void
   onDisconnect(cb: (reason: string) => void): void
@@ -217,6 +218,7 @@ export async function connect(
   connectFn: typeof DjsConnect = DjsConnect,
 ): Promise<DeliverooClient> {
   const token = role === 'liaison' ? config.TOKEN_LIAISON : config.TOKEN_COURIER
+  // DELIVEROO_HOST must be scheme+host WITHOUT a port (e.g. http://localhost); the port is appended here
   const host = `${config.DELIVEROO_HOST}:${config.DELIVEROO_PORT}`
   const socket: DjsClientSocket = connectFn(host, token, '', true)
 
@@ -239,6 +241,15 @@ export async function connect(
     anchorWallMs = Date.now()
   })
   const tick = (): number => tickFrom(anchorFrame, anchorWallMs, Date.now(), consts.CLOCK)
+
+  // Spec §8: log action rejections (ack timeout / disconnect) at warn, then
+  // rethrow so the BDI caller can re-plan. A `false` move resolves normally and
+  // is NOT a rejection — it passes through untouched.
+  const logReject = <T>(action: string, p: Promise<T>): Promise<T> =>
+    p.catch((err: unknown) => {
+      logger.warn({ role, action, err: String(err) }, 'action rejected')
+      throw err
+    })
 
   // perception
   let perceptionCb: ((s: PerceptionSnapshot) => void) | null = null
@@ -266,17 +277,17 @@ export async function connect(
     onConnect: (cb) => socket.onConnect(cb),
     onDisconnect: (cb) => socket.onDisconnect(cb),
 
-    move: (dir) => socket.emitMove(dir),
-    pickup: () => socket.emitPickup(),
-    putdown: (ids) => socket.emitPutdown(ids),
+    move: (dir) => logReject('move', socket.emitMove(dir)),
+    pickup: () => logReject('pickup', socket.emitPickup()),
+    putdown: (ids) => logReject('putdown', socket.emitPutdown(ids)),
 
     onMissionMsg:
       role === 'liaison'
         ? (cb) => socket.onMsg((id, name, msg) => cb(id, name, msg))
         : missionOnly,
-    say: role === 'liaison' ? (toId, msg) => socket.emitSay(toId, msg) : missionOnly,
-    ask: role === 'liaison' ? (toId, msg) => socket.emitAsk(toId, msg) : missionOnly,
-    shout: role === 'liaison' ? (msg) => socket.emitShout(msg) : missionOnly,
+    say: role === 'liaison' ? (toId, msg) => logReject('say', socket.emitSay(toId, msg)) : missionOnly,
+    ask: role === 'liaison' ? (toId, msg) => logReject('ask', socket.emitAsk(toId, msg)) : missionOnly,
+    shout: role === 'liaison' ? (msg) => logReject('shout', socket.emitShout(msg)) : missionOnly,
 
     close: () => {
       socket.disconnect()
