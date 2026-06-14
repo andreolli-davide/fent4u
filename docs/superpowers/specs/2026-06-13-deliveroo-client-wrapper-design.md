@@ -195,6 +195,7 @@ BROADCAST_LOGS, GAME }`, where `GAME.parcels.decaying_event` and
 ```
 parseDecayEvent(ev: string, clockMs: number): number
   'infinite'        -> Infinity            // no decay
+  'frame'           -> 1                    // decay every frame = 1 tick (valid SDK clock event)
   '1s'|'2s'|'5s'|'10s'|'1m'|'1h' -> eventMs(ev) / clockMs   // ticks per 1-point decay
   unknown           -> log warn, default to '1s' equivalent  // matches SDK parseClockEvent fallback
 ```
