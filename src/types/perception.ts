@@ -73,3 +73,6 @@ export interface PerceptionSnapshot {
   agents: AgentObs[]
   crates: CrateObs[]
 }
+
+/** Canonical position key: string representation of a tile coordinate. */
+export const posKey = (p: Pos): string => `${p.x},${p.y}`
