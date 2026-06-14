@@ -57,6 +57,7 @@ describe('relay', () => {
     const envelope: WorkerEnvelope = {
       kind: 'init',
       config: {} as never,
+      params: {} as never,
     }
 
     relay(envelope, 'liaison', workers, () => {})
