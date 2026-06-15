@@ -116,6 +116,11 @@ export class BdiLoop {
       // (sharedSelf for me, partnerSnap.pos for the partner) — both are shared state, so
       // the claim is identical on both replicas.
       for (const [parcelId, winner] of alloc) {
+        // Degraded mode (partner lost → partnerSnap is a phantom at our own pos): do NOT
+        // materialize the phantom's wins as claims — that would exclude those parcels from
+        // our own pool and strand them. Solo survivor keeps own wins only (pre-Lever-B
+        // behaviour). When the partner is live, commit the FULL allocation (Lever B).
+        if (winner !== me && partner === null) continue
         const p = beliefs.parcels.get(parcelId)! // safe: pool ⊆ beliefs.parcels, parcels not mutated between buildPool and here
         const winnerPos = winner === me ? sharedSelf : partnerSnap.pos
         const d = dist(winnerPos, p.pos)
