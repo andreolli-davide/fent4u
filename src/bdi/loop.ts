@@ -111,7 +111,7 @@ export class BdiLoop {
       for (const [parcelId, winner] of alloc) {
         if (winner !== me) continue
         const p = beliefs.parcels.get(parcelId)! // safe: pool ⊆ beliefs.parcels, parcels not mutated between buildPool and here
-        const claim: Claim = { parcelId, agentId: me, origin: 'AUCTION', epoch: tnow, commitTick: tnow, originD: dist(sharedSelf, p.pos), lastD: dist(sharedSelf, p.pos), lastProgressTick: tnow }
+        const claim: Claim = { parcelId, agentId: me, origin: 'AUCTION', epoch: tnow, commitTick: tnow, originD: dist(sharedSelf, p.pos), lastD: dist(self, p.pos), lastProgressTick: tnow }
         this.claims.add(claim)
         this.broadcast({ kind: 'claim', claim })
       }
@@ -179,7 +179,7 @@ export class BdiLoop {
     this.committedU = chosenCand.u
 
     await this.act(chosen, beliefs, ctx, tnow)
-    this.prevSelf = self // shipped to partner by blackboard.onTick after this returns ⇒ next tick's shared self
+    this.prevSelf = self // recorded so that if blackboard.onTick ships self this tick, both replicas share the same value next tick
     this.log.debug({ durationMs: performance.now() - t0, tick: tnow }, 'tick')
   }
 
