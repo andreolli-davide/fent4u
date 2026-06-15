@@ -55,28 +55,34 @@ test('stale partner positions orphan a contested parcel (each assigns it to the 
     send: (msg: A2AMessage) => { if (msg.type === 'claims' && isClaimMsg(msg.payload)) courierClaims.applyMsg(msg.payload, 'liaison') },
   })
 
-  // ONE parcel at x=6. Real positions: courier x=5, liaison x=7 (symmetric, d=1 each).
-  // But each agent's REPLICATED view of the partner lags: it last saw the partner AT
-  // the parcel (x=6, d=0). So each agent believes the partner is strictly closer.
+  // ONE parcel at x=6. Real positions: courier x=3 (d=3), liaison x=9 (d=3).
+  // Each agent's REPLICATED view of the partner lags: courier sees stale liaison at x=7
+  // (d=1 from parcel); liaison sees stale courier at x=5 (d=1 from parcel).
+  // So each agent believes the partner is strictly closer → each assigns to the partner.
+  // Stale positions are NOT at the parcel (avoids the goal-is-blocked pathfinding edge
+  // case); they are just closer to it than the observer's own real position.
   const courierSnap: PerceptionSnapshot = {
     tick: 1,
-    self: { id: 'courier', name: 'courier', teamId: 'T', pos: { x: 5, y: 0 }, score: 0 },
-    agents: [{ id: 'liaison', name: 'liaison', teamId: 'T', pos: { x: 6, y: 0 }, score: 0 }], // stale
+    self: { id: 'courier', name: 'courier', teamId: 'T', pos: { x: 3, y: 0 }, score: 0 },
+    agents: [{ id: 'liaison', name: 'liaison', teamId: 'T', pos: { x: 7, y: 0 }, score: 0 }], // stale: d=1 from parcel
     parcels: [{ id: 'p', pos: { x: 6, y: 0 }, reward: 10, carriedBy: null }],
     crates: [],
   }
   const liaisonSnap: PerceptionSnapshot = {
     tick: 1,
-    self: { id: 'liaison', name: 'liaison', teamId: 'T', pos: { x: 7, y: 0 }, score: 0 },
-    agents: [{ id: 'courier', name: 'courier', teamId: 'T', pos: { x: 6, y: 0 }, score: 0 }], // stale
+    self: { id: 'liaison', name: 'liaison', teamId: 'T', pos: { x: 9, y: 0 }, score: 0 },
+    agents: [{ id: 'courier', name: 'courier', teamId: 'T', pos: { x: 5, y: 0 }, score: 0 }], // stale: d=1 from parcel
     parcels: [{ id: 'p', pos: { x: 6, y: 0 }, reward: 10, carriedBy: null }],
     crates: [],
   }
 
   await Promise.all([courierLoop.tick(courierSnap), liaisonLoop.tick(liaisonSnap)])
 
-  // §9.3 promises exactly one agent owns each reachable parcel. With stale positions
-  // the parcel is orphaned: neither store claims it.
-  expect(courierClaims.claimedBy('p')).not.toBeNull()
-  expect(liaisonClaims.claimedBy('p')).not.toBeNull()
+  // §9.3 promises exactly one agent owns each reachable parcel, and both replicas
+  // agree. With orphans fixed, neither store is null AND they name the same owner.
+  const courierOwner = courierClaims.claimedBy('p')
+  const liaisonOwner = liaisonClaims.claimedBy('p')
+  expect(courierOwner).not.toBeNull()
+  expect(liaisonOwner).not.toBeNull()
+  expect(courierOwner).toBe(liaisonOwner!) // replicas converge on one owner
 })

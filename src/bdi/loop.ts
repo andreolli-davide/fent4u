@@ -105,13 +105,21 @@ export class BdiLoop {
         : { id: this.coord.partner, pos: self, carried: [], claimed: [] } // degraded: no partner bids
       const enemies = [...beliefs.agents.values()].filter((a) => a.rel === 'enemy')
       const { pool } = this.buildPool(beliefs, sharedSelf, tnow, dist)
-      // 2. auction the unclaimed pool (deterministic; commit only own wins)
+      // 2. auction the unclaimed pool (deterministic; commit full allocation)
       const agents: [AgentSnap, AgentSnap] = me < this.coord.partner ? [meSnap, partnerSnap] : [partnerSnap, meSnap]
       const alloc = runAuction({ pool, agents, enemies, zones: this.grid.deliveryZones, dist, dc: this.dc, params: this.params, tnow, epoch: tnow, budgetMs: this.params.auction_budget_ms })
+      // §9.3/Lever B: commit & broadcast the FULL allocation (claims for BOTH agents),
+      // not just our own wins. Under any residual input divergence a parcel one replica
+      // assigns to the partner would otherwise be committed by neither → orphaned. The
+      // same-epoch / lower-id conflict rule (claims.ts) reconciles disagreements to one
+      // owner within ≤1 tick (DESIGN §9.3). originD/lastD use the winner's SHARED pos
+      // (sharedSelf for me, partnerSnap.pos for the partner) — both are shared state, so
+      // the claim is identical on both replicas.
       for (const [parcelId, winner] of alloc) {
-        if (winner !== me) continue
         const p = beliefs.parcels.get(parcelId)! // safe: pool ⊆ beliefs.parcels, parcels not mutated between buildPool and here
-        const claim: Claim = { parcelId, agentId: me, origin: 'AUCTION', epoch: tnow, commitTick: tnow, originD: dist(sharedSelf, p.pos), lastD: dist(self, p.pos), lastProgressTick: tnow }
+        const winnerPos = winner === me ? sharedSelf : partnerSnap.pos
+        const d = dist(winnerPos, p.pos)
+        const claim: Claim = { parcelId, agentId: winner, origin: 'AUCTION', epoch: tnow, commitTick: tnow, originD: d, lastD: d, lastProgressTick: tnow }
         this.claims.add(claim)
         this.broadcast({ kind: 'claim', claim })
       }
