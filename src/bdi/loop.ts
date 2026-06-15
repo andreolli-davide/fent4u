@@ -36,7 +36,10 @@ export class BdiLoop {
 
   /** Drive one perception tick → at most one action. Skips if an action is in flight. */
   async tick(snap: PerceptionSnapshot): Promise<void> {
-    if (this.acting) return
+    if (this.acting) {
+      this.log.debug({ tick: snap.tick }, 'tick skipped — action in flight')
+      return
+    }
     const t0 = performance.now()
     if (this.beliefs === null) this.beliefs = new BeliefBase(snap.self, this.client.consts, this.client.map)
     const beliefs = this.beliefs
@@ -170,9 +173,10 @@ export class BdiLoop {
     }
   }
 
+  // Server convention (GAME_RULES.md §Movement): up = dy +1, down = dy -1.
   private ahead(p: Pos, dir: Dir): Pos {
-    if (dir === 'up') return { x: p.x, y: p.y - 1 }
-    if (dir === 'down') return { x: p.x, y: p.y + 1 }
+    if (dir === 'up') return { x: p.x, y: p.y + 1 }
+    if (dir === 'down') return { x: p.x, y: p.y - 1 }
     if (dir === 'left') return { x: p.x - 1, y: p.y }
     return { x: p.x + 1, y: p.y }
   }

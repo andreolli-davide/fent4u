@@ -45,6 +45,15 @@ test('first step points toward the goal', () => {
   expect(r.firstStep).toEqual({ kind: 'move', dir: 'right' })
 })
 
+// Server convention (GAME_RULES.md §Movement): up = dy +1, down = dy -1.
+// Pins the direction strings we emit to the server's y-axis so a planner that is
+// internally consistent but inverted relative to the wire is caught here.
+test('vertical first step matches server up/down convention', () => {
+  const grid = buildGrid(parse(['.', '.']))
+  expect(planPath(grid, emptyCtx, { x: 0, y: 0 }, { x: 0, y: 1 }).firstStep).toEqual({ kind: 'move', dir: 'up' })
+  expect(planPath(grid, emptyCtx, { x: 0, y: 1 }, { x: 0, y: 0 }).firstStep).toEqual({ kind: 'move', dir: 'down' })
+})
+
 test('crate tile is impassable (crates-as-walls baseline)', () => {
   const grid = buildGrid(parse(['...']))
   const ctx: PlanCtx = {
