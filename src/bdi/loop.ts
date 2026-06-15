@@ -189,7 +189,7 @@ export class BdiLoop {
     }
 
     if (self.x === goal.x && self.y === goal.y) {
-      if (atGoalAction === 'pickup') await this.doPickup(beliefs)
+      if (atGoalAction === 'pickup') await this.doPickup(beliefs, tnow)
       else if (atGoalAction === 'deliver') await this.doDeliver(beliefs, goal, tnow)
       return
     }
@@ -215,7 +215,7 @@ export class BdiLoop {
     }
   }
 
-  private async doPickup(beliefs: BeliefBase): Promise<void> {
+  private async doPickup(beliefs: BeliefBase, tnow: number): Promise<void> {
     this.acting = true
     try {
       const got = await this.client.pickup()
@@ -224,7 +224,7 @@ export class BdiLoop {
       for (const id of ids) {
         if (this.claims.claimedBy(id) === this.client.role) {
           this.claims.remove(id)
-          this.broadcast({ kind: 'release', parcelId: id, epoch: 0 })
+          this.broadcast({ kind: 'release', parcelId: id, epoch: tnow })
         }
       }
     } finally {
