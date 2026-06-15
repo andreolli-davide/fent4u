@@ -52,3 +52,31 @@ test('a free parcel is auctioned to self and broadcast as a claim', async () => 
   expect(claims.claimedBy('p1')).toBe('courier')
   expect(sent.some((m) => (m as { type: string }).type === 'claims')).toBe(true)
 })
+
+test('partner lost (silent past PARTNER_LOST_TICKS) → its soft claim is reclaimed & re-auctioned (§9.7/§11)', async () => {
+  const rec = fakeClient(rowMap())
+  const claims = new ClaimStore()
+  // liaison committed p1 long ago and the a2a channel has since gone silent (partner never
+  // appears in beliefs ⇒ lastSeen never advances ⇒ age ≥ PARTNER_LOST_TICKS).
+  claims.add({ parcelId: 'p1', agentId: 'liaison', origin: 'AUCTION', epoch: 0, commitTick: 0, originD: 4, lastD: 4, lastProgressTick: 0 })
+  const loop = new BdiLoop(rec.client, DEFAULT_PARAMS, { info: () => {}, debug: () => {}, warn: () => {} }, claims, {
+    partner: 'liaison', send: () => {},
+  })
+  await loop.tick(snap({ tick: 100, self: { id: 'me', name: 'me', teamId: 'A', pos: { x: 3, y: 0 }, score: 0 }, parcels: [pcl('p1', 4)] }))
+  expect(claims.claimedBy('p1')).toBe('courier') // survivor reclaimed and re-won it
+})
+
+test('coordinated mode never opportunistically grabs an un-auctioned parcel (anytime, §9.3/§9.7)', async () => {
+  const rec = fakeClient(rowMap())
+  const claims = new ClaimStore()
+  // zero auction budget ⇒ nothing assigned this tick (anytime fallback). In coordinated mode
+  // the route is derived ONLY from claims, so the agent must NOT fall back to buildRoute and
+  // chase p1 — it waits for a future tick's auction. (No spawners ⇒ no explore move either.)
+  const params = { ...DEFAULT_PARAMS, auction_budget_ms: 0 }
+  const loop = new BdiLoop(rec.client, params, { info: () => {}, debug: () => {}, warn: () => {} }, claims, {
+    partner: 'liaison', send: () => {},
+  })
+  await loop.tick(snap({ self: { id: 'me', name: 'me', teamId: 'A', pos: { x: 3, y: 0 }, score: 0 }, parcels: [pcl('p1', 5)] }))
+  expect(claims.claimedBy('p1')).toBeNull()
+  expect(rec.moves).toEqual([]) // did not chase the un-auctioned parcel
+})

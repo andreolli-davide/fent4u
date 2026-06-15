@@ -67,14 +67,38 @@ export class ClaimStore {
   }
 
   /**
-   * §9.7 liveness. `distOf(c)` = d(owner now, parcel). Updates lastD/lastProgressTick;
-   * returns (and removes) AUCTION claims with no strict progress for CLAIM_TTL ticks.
-   * MISSION claims never expire here (§9.10). Iterates sorted ids for determinism.
+   * §9.7/§11 degraded mode. When the partner is lost (no a2a for PARTNER_LOST_TICKS),
+   * locally drop the soft AUCTION claims owned by anyone other than `self`, so their
+   * parcels re-enter our pool and the survivor wins everything reachable. MISSION claims
+   * are left locked (§9.10). Local-only — no release is broadcast (the channel is down).
+   * Returns the dropped claims. Iterates sorted ids for determinism.
    */
-  expire(tnow: number, distOf: (c: Claim) => number, claimTtl: number): Claim[] {
+  dropForeignAuctionClaims(self: AgentId): Claim[] {
     const dropped: Claim[] = []
     for (const id of [...this.byParcel.keys()].sort()) {
       const c = this.byParcel.get(id)!
+      if (c.agentId !== self && c.origin === 'AUCTION') {
+        this.byParcel.delete(id)
+        dropped.push(c)
+      }
+    }
+    return dropped
+  }
+
+  /**
+   * §9.7 liveness — an OWNER-PROGRESS backstop, so it governs only `self`'s own claims.
+   * The partner runs the identical check on its replica for its claims and broadcasts its
+   * own releases; a replica must NOT expire (and then release) the partner's claim using
+   * its own distance, which would cancel a valid claim and break replica convergence.
+   * `distOf(c)` = d(self now, parcel). Updates lastD/lastProgressTick; returns (and removes)
+   * own AUCTION claims with no strict progress for CLAIM_TTL ticks. MISSION claims never
+   * expire here (§9.10). Iterates sorted ids for determinism.
+   */
+  expire(tnow: number, distOf: (c: Claim) => number, claimTtl: number, self: AgentId): Claim[] {
+    const dropped: Claim[] = []
+    for (const id of [...this.byParcel.keys()].sort()) {
+      const c = this.byParcel.get(id)!
+      if (c.agentId !== self) continue // only the owner's progress governs its claim's liveness
       const d = distOf(c)
       if (d < c.lastD) {
         c.lastD = d

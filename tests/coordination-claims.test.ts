@@ -19,7 +19,7 @@ test('expire drops claims with no progress for CLAIM_TTL ticks', () => {
   const s = new ClaimStore()
   s.add(claim('stuck', 'courier', { lastD: 5, lastProgressTick: 0 }))
   // tnow=10, still 5 away (no progress since tick 0), CLAIM_TTL=10 → expires
-  const dropped = s.expire(10, () => 5, 10)
+  const dropped = s.expire(10, () => 5, 10, 'courier')
   expect(dropped.map((c) => c.parcelId)).toEqual(['stuck'])
   expect(s.claimedBy('stuck')).toBeNull()
 })
@@ -27,8 +27,8 @@ test('expire drops claims with no progress for CLAIM_TTL ticks', () => {
 test('expire keeps a claim that is still making progress', () => {
   const s = new ClaimStore()
   s.add(claim('moving', 'courier', { lastD: 5, lastProgressTick: 0 }))
-  s.expire(3, () => 4, 10) // got closer (5→4) at tick 3 → progress, resets timer
-  const dropped = s.expire(12, () => 4, 10) // 9 ticks since last progress < 10 → kept
+  s.expire(3, () => 4, 10, 'courier') // got closer (5→4) at tick 3 → progress, resets timer
+  const dropped = s.expire(12, () => 4, 10, 'courier') // 9 ticks since last progress < 10 → kept
   expect(dropped).toEqual([])
   expect(s.claimedBy('moving')).toBe('courier')
 })
@@ -36,9 +36,19 @@ test('expire keeps a claim that is still making progress', () => {
 test('expire keeps MISSION claims regardless of TTL', () => {
   const s = new ClaimStore()
   s.add(claim('locked', 'courier', { origin: 'MISSION', lastD: 5, lastProgressTick: 0 }))
-  const dropped = s.expire(100, () => 5, 10)
+  const dropped = s.expire(100, () => 5, 10, 'courier')
   expect(dropped).toEqual([])
   expect(s.claimedBy('locked')).toBe('courier')
+})
+
+test('expire governs ONLY the caller’s own claims, never the partner’s (§9.7 liveness is owner-progress)', () => {
+  const s = new ClaimStore()
+  // partner (liaison) owns p1; I am courier and — correctly — never walk toward it
+  s.add(claim('p1', 'liaison', { lastD: 5, lastProgressTick: 0 }))
+  // from courier's vantage: way past CLAIM_TTL with "no progress" (because it isn't mine to progress)
+  const dropped = s.expire(100, () => 5, 10, 'courier')
+  expect(dropped).toEqual([]) // must NOT drop the partner's valid claim
+  expect(s.claimedBy('p1')).toBe('liaison')
 })
 
 test('ownClaims returns sorted by parcelId', () => {
@@ -54,6 +64,18 @@ test('remove deletes a claim', () => {
   s.add(claim('p1', 'courier'))
   s.remove('p1')
   expect(s.claimedBy('p1')).toBeNull()
+})
+
+test('dropForeignAuctionClaims reclaims only the partner’s soft claims, keeps mine + MISSION locks (§9.7/§11)', () => {
+  const s = new ClaimStore()
+  s.add(claim('mine', 'courier')) // own — keep
+  s.add(claim('theirs', 'liaison')) // partner AUCTION — reclaim
+  s.add(claim('locked', 'liaison', { origin: 'MISSION' })) // partner MISSION — keep (locked, §9.10)
+  const dropped = s.dropForeignAuctionClaims('courier')
+  expect(dropped.map((c) => c.parcelId)).toEqual(['theirs'])
+  expect(s.claimedBy('theirs')).toBeNull()
+  expect(s.claimedBy('mine')).toBe('courier')
+  expect(s.claimedBy('locked')).toBe('liaison')
 })
 
 test('applyMsg: claim then release converges', () => {

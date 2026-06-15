@@ -28,6 +28,7 @@ export class BdiLoop {
   private committedU = 0
   private acting = false
   private lastRebalanceTick = -Infinity
+  private prevOwnClaims = 0 // own-claim count last tick — for the route-finished falling edge (§9.6)
 
   constructor(
     private readonly client: DeliverooClient,
@@ -56,19 +57,39 @@ export class BdiLoop {
     const tnow = snap.tick
     const self = beliefs.self.pos
     const ctx = this.planCtx(beliefs)
-    const dist = (a: Pos, b: Pos): number => planPath(this.grid, ctx, a, b).L
+    // Per-tick memo: ctx is fixed for the tick, and route/auction/rebalance/explore all
+    // re-query the same (a,b) pairs many times (bestInsert is O(n²) in dist calls). Keyed
+    // by ordered (a,b) — planPath is directional (push asymmetry, tolls), so never symmetric.
+    const distMemo = new Map<string, number>()
+    const dist = (a: Pos, b: Pos): number => {
+      const k = `${a.x},${a.y}|${b.x},${b.y}`
+      const hit = distMemo.get(k)
+      if (hit !== undefined) return hit
+      const L = planPath(this.grid, ctx, a, b).L
+      distMemo.set(k, L)
+      return L
+    }
 
     // ── coordination (§9.3/§9.6/§9.7) ──
     // 1. liveness: expire own stuck claims (distOf reads live d from this agent)
     const dropped = this.claims.expire(tnow, (c) => {
       const p = beliefs.parcels.get(c.parcelId)
       return p ? dist(self, p.pos) : Infinity
-    }, this.params.claim_ttl)
+    }, this.params.claim_ttl, this.client.role)
     for (const c of dropped) this.broadcast({ kind: 'release', parcelId: c.parcelId, epoch: tnow })
 
     if (this.coord) {
       const me = this.client.role
       const partner = beliefs.agents.get(this.coord.partner) ?? null
+      // §9.7/§11 degradation: partner.lastSeen tracks the last tick its state arrived over
+      // a2a (the blackboard ships self every tick), so it doubles as a channel heartbeat. If
+      // it has gone silent past PARTNER_LOST_TICKS, drop its soft claims locally so we reclaim
+      // its parcels and degrade to solo play (region ownership). MISSION locks survive.
+      const partnerAge = partner ? tnow - partner.lastSeen : Infinity
+      if (partnerAge >= this.params.partner_lost_ticks) {
+        const reclaimed = this.claims.dropForeignAuctionClaims(me)
+        if (reclaimed.length > 0) this.log.info({ tick: tnow, count: reclaimed.length, partner: this.coord.partner }, 'partner lost — reclaimed soft claims')
+      }
       // build both agent snapshots from shared beliefs
       const carried = beliefs.self.carrying.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
       const meSnap: AgentSnap = { id: me, pos: self, carried, claimed: this.claimedParcels(beliefs, me) }
@@ -87,9 +108,13 @@ export class BdiLoop {
         this.claims.add(claim)
         this.broadcast({ kind: 'claim', claim })
       }
-      // 3. periodic rebalance (or on own route finish)
-      const routeFinished = this.claims.ownClaims(me).length === 0
-      if (tnow - this.lastRebalanceTick >= this.params.rebalance_period || routeFinished) {
+      // 3. periodic rebalance, or on the tick the route JUST finished (§9.6: "whenever an
+      //    agent finishes its route"). Use the falling edge (had claims → now none), NOT a
+      //    level test on emptiness — the latter re-runs the rebalance (and its A* recompute)
+      //    every idle tick and can oscillate swaps when margins flip sign tick-to-tick.
+      const ownCount = this.claims.ownClaims(me).length
+      const routeJustFinished = ownCount === 0 && this.prevOwnClaims > 0
+      if (tnow - this.lastRebalanceTick >= this.params.rebalance_period || routeJustFinished) {
         this.lastRebalanceTick = tnow
         const ra: [RebalanceAgent, RebalanceAgent] = [
           { id: agents[0].id, pos: agents[0].pos, carried: agents[0].carried, claimed: agents[0].claimed },
@@ -101,6 +126,7 @@ export class BdiLoop {
           this.broadcast({ kind: 'swap', parcelId: s.parcelId, toAgent: s.toAgent, epoch: tnow })
         }
       }
+      this.prevOwnClaims = this.claims.ownClaims(me).length // post-coordination count for next tick's edge
     }
 
     // candidates
@@ -111,12 +137,16 @@ export class BdiLoop {
     const ownClaimed = this.claims.ownClaims(this.client.role)
       .map((c) => beliefs.parcels.get(c.parcelId))
       .filter((p): p is ParcelBelief => p !== undefined && p.carriedBy === null)
-    // If claims exist, derive route from committed set (§9.7); otherwise fall back to
-    // opportunistic buildRoute so the agent still pursues visible unclaimed parcels when
-    // the auction store is empty (e.g., before Task 9 wires up bidding).
-    const route = ownClaimed.length > 0 || carried.length > 0
+    // Coordinated: the auction is the sole authority on what I own, so the route is derived
+    // ONLY from my committed claims (§9.7) — never opportunistically grab a parcel the team
+    // auction declined (emergent horizon) or merely hasn't bid yet this tick (anytime, §9.3:
+    // leftover pool waits for the next tick). Solo (no partner channel): no auction runs, so
+    // fall back to greedy buildRoute over the pool to still pursue visible parcels.
+    const route = this.coord
       ? routeFromClaims(carried, ownClaimed, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf)
-      : buildRoute(carried, pool, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf)
+      : ownClaimed.length > 0 || carried.length > 0
+        ? routeFromClaims(carried, ownClaimed, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf)
+        : buildRoute(carried, pool, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf)
     const cands: Candidate[] = []
     if (route !== null) cands.push({ intention: { kind: 'route', route }, u: uRoute(route, tnow, this.dc, this.params, weightOf) })
     let partnerTarget: Pos | null = null
@@ -210,6 +240,11 @@ export class BdiLoop {
 
   private async stepToward(beliefs: BeliefBase, ctx: PlanCtx, self: Pos, goal: Pos): Promise<void> {
     let res = planPath(this.grid, ctx, self, goal)
+    // Push-aware search hit its budget — NOT proof of unreachability. Re-plan with
+    // crates-as-walls, the safe anytime fallback (§15.3), instead of giving up.
+    if (res.timedOut) {
+      res = planPath(this.grid, { ...ctx, cratesAsWalls: true }, self, goal)
+    }
     if (res.firstStep?.kind === 'push') {
       const dir = res.firstStep.dir
       const cratePos = this.ahead(self, dir)
