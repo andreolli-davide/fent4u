@@ -91,3 +91,20 @@ export function buildRoute(carried: ParcelBelief[], pool: ParcelBelief[], self: 
   }
   return current.route
 }
+
+/**
+ * §9.7 route derived from a committed claim set: order ALL of `claimed` by greedy
+ * cheapest insertion and include every one (committed parcels are never dropped —
+ * the auction already decided to take them). Null only when carrying nothing AND
+ * no claim is reachable. Pass `claimed` pre-sorted by id for replica-determinism.
+ */
+export function routeFromClaims(carried: ParcelBelief[], claimed: ParcelBelief[], self: Pos, zones: Pos[], tnow: number, dc: DecayConsts, params: Params, dist: Dist, weight: ParcelWeight = W1): Route | null {
+  if (carried.length === 0 && claimed.length === 0) return null
+  let cur = score(self, carried, [], zones, tnow, dc, params, dist, weight)
+  if (cur === null) return null // no reachable zone
+  for (const p of claimed) {
+    const ins = bestInsert(self, carried, cur.route.pickups, p, zones, tnow, dc, params, dist, weight)
+    if (ins !== null) cur = ins // unreachable insertion: skip; parcel stays claimed but unrouted this tick
+  }
+  return cur.route
+}
