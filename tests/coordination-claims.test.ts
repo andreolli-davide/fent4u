@@ -79,6 +79,27 @@ test('applyMsg: higher-id incoming claim does not override the lower-id local ow
   expect(s.claimedBy('p1')).toBe('courier')
 })
 
+test('applyMsg: swap transfers ownership', () => {
+  const s = new ClaimStore()
+  s.add(claim('p1', 'liaison'))
+  s.applyMsg({ kind: 'swap', parcelId: 'p1', toAgent: 'courier', epoch: 1 }, 'liaison')
+  expect(s.claimedBy('p1')).toBe('courier')
+})
+
+test('applyMsg: stale claim does not overwrite newer epoch', () => {
+  const s = new ClaimStore()
+  s.add(claim('p1', 'courier', { epoch: 5 }))
+  s.applyMsg({ kind: 'claim', claim: claim('p1', 'liaison', { epoch: 3 }) }, 'courier')
+  expect(s.claimedBy('p1')).toBe('courier') // stale liaison claim ignored
+})
+
+test('applyMsg: stale release does not delete newer claim', () => {
+  const s = new ClaimStore()
+  s.add(claim('p1', 'courier', { epoch: 5 }))
+  s.applyMsg({ kind: 'release', parcelId: 'p1', epoch: 3 }, 'courier')
+  expect(s.claimedBy('p1')).toBe('courier') // stale release ignored
+})
+
 test('isClaimMsg guards malformed payloads', () => {
   expect(isClaimMsg({ kind: 'claim', claim: claim('p1', 'courier') })).toBe(true)
   expect(isClaimMsg({ kind: 'nope' })).toBe(false)

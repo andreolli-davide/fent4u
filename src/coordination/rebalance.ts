@@ -45,8 +45,9 @@ function weightFor(agent: RebalanceAgent, inp: RebalanceInput): ParcelWeight {
 
 function routeU(a: RebalanceAgent, set: ParcelBelief[], inp: RebalanceInput): number {
   const sorted = [...set].sort((x, y) => x.id.localeCompare(y.id))
-  const r = routeFromClaims(a.carried, sorted, a.pos, inp.zones, inp.tnow, inp.dc, inp.params, inp.dist, weightFor(a, inp))
-  return r === null ? 0 : uRoute(r, inp.tnow, inp.dc, inp.params, weightFor(a, inp))
+  const w = weightFor(a, inp)
+  const r = routeFromClaims(a.carried, sorted, a.pos, inp.zones, inp.tnow, inp.dc, inp.params, inp.dist, w)
+  return r === null ? 0 : uRoute(r, inp.tnow, inp.dc, inp.params, w)
 }
 
 export function runRebalance(inp: RebalanceInput): Reassign[] {

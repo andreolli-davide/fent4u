@@ -98,6 +98,7 @@ export class ClaimStore {
       case 'claim': {
         const incoming = msg.claim
         const cur = this.byParcel.get(incoming.parcelId)
+        if (cur && incoming.epoch < cur.epoch) return // stale message — ignore
         if (cur && cur.epoch === incoming.epoch && cur.agentId !== incoming.agentId) {
           // same-epoch conflict → lower id wins
           if (incoming.agentId < cur.agentId) this.byParcel.set(incoming.parcelId, incoming)
@@ -106,12 +107,15 @@ export class ClaimStore {
         this.byParcel.set(incoming.parcelId, incoming)
         return
       }
-      case 'release':
+      case 'release': {
+        const cur = this.byParcel.get(msg.parcelId)
+        if (cur && msg.epoch < cur.epoch) return // stale release — ignore
         this.byParcel.delete(msg.parcelId)
         return
+      }
       case 'swap': {
         const cur = this.byParcel.get(msg.parcelId)
-        if (cur) cur.agentId = msg.toAgent
+        if (cur) this.byParcel.set(msg.parcelId, { ...cur, agentId: msg.toAgent })
         return
       }
     }
