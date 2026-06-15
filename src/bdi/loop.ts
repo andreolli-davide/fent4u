@@ -4,9 +4,10 @@ import type { PerceptionSnapshot, Pos, Tile } from '../types/perception.js'
 import { BeliefBase, type ParcelBelief } from '../blackboard/beliefs.js'
 import { buildGrid, buildObstacles, planPath, isPushAdmissible, type Grid, type PlanCtx, type Dir } from '../planning/astar.js'
 import { decayConsts, pAvail, deliverBundle, tileKey, type DecayConsts, type EnemyThreat } from './utility.js'
-import { buildRoute, uRoute } from './route.js'
+import { buildRoute, uRoute, routeFromClaims } from './route.js'
 import { select, chooseExplore, matches, type Intention, type Candidate } from './intentions.js'
 import type { Params } from './params.js'
+import { ClaimStore } from '../coordination/claims.js'
 
 type LogFn = {
   info: (obj: Record<string, unknown>, msg?: string) => void
@@ -28,6 +29,7 @@ export class BdiLoop {
     private readonly client: DeliverooClient,
     private readonly params: Params,
     private readonly log: LogFn,
+    private readonly claims: ClaimStore = new ClaimStore(),
   ) {
     this.grid = buildGrid(client.map)
     this.dc = decayConsts(client.consts)
@@ -56,7 +58,15 @@ export class BdiLoop {
     const { pool, weight } = this.buildPool(beliefs, self, tnow, dist)
     // Pickups weight their P_avail (survival × race); carried parcels are in hand ⇒ 1 (§5.5).
     const weightOf = (p: ParcelBelief): number => weight.get(p.id) ?? 1
-    const route = buildRoute(carried, pool, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf)
+    const ownClaimed = this.claims.ownClaims(this.client.role)
+      .map((c) => beliefs.parcels.get(c.parcelId))
+      .filter((p): p is ParcelBelief => p !== undefined && p.carriedBy === null)
+    // If claims exist, derive route from committed set (§9.7); otherwise fall back to
+    // opportunistic buildRoute so the agent still pursues visible unclaimed parcels when
+    // the auction store is empty (e.g., before Task 9 wires up bidding).
+    const route = ownClaimed.length > 0 || carried.length > 0
+      ? routeFromClaims(carried, ownClaimed, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf)
+      : buildRoute(carried, pool, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf)
     const cands: Candidate[] = []
     if (route !== null) cands.push({ intention: { kind: 'route', route }, u: uRoute(route, tnow, this.dc, this.params, weightOf) })
     const ex = chooseExplore(this.spawners, this.seenAt, self, tnow, dist, this.params)
@@ -96,8 +106,10 @@ export class BdiLoop {
     const enemies = [...beliefs.agents.values()].filter((a) => a.rel === 'enemy')
     const pool: ParcelBelief[] = []
     const weight = new Map<string, number>()
+    const partnerClaimed = this.claims.partnerClaimed(this.client.role)
     for (const p of beliefs.parcels.values()) {
       if (p.carriedBy !== null) continue
+      if (partnerClaimed.has(p.id)) continue // §9.4: partner-claimed ⇒ P_avail = 0 for me
       const dSelfP = dist(self, p.pos)
       if (!Number.isFinite(dSelfP)) continue
       const threats: EnemyThreat[] = enemies.map((e) => ({ age: tnow - e.lastSeen, dToP: dist(e.pos, p.pos) }))
