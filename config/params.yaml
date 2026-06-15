@@ -1,8 +1,8 @@
 # BDI hyperparameters (DESIGN §5.8)
 alpha: 1.0
 beta_comp: 0.7
-theta_explore: 0.1
-kappa_info: 0.3
+theta_explore: 0.3
+kappa_info: 0.1
 h_commit: 0.15
 eps_idle: 0.001
 push_plan_budget_ms: 8
