@@ -56,7 +56,18 @@ export class BdiLoop {
     const tnow = snap.tick
     const self = beliefs.self.pos
     const ctx = this.planCtx(beliefs)
-    const dist = (a: Pos, b: Pos): number => planPath(this.grid, ctx, a, b).L
+    // Per-tick memo: ctx is fixed for the tick, and route/auction/rebalance/explore all
+    // re-query the same (a,b) pairs many times (bestInsert is O(n²) in dist calls). Keyed
+    // by ordered (a,b) — planPath is directional (push asymmetry, tolls), so never symmetric.
+    const distMemo = new Map<string, number>()
+    const dist = (a: Pos, b: Pos): number => {
+      const k = `${a.x},${a.y}|${b.x},${b.y}`
+      const hit = distMemo.get(k)
+      if (hit !== undefined) return hit
+      const L = planPath(this.grid, ctx, a, b).L
+      distMemo.set(k, L)
+      return L
+    }
 
     // ── coordination (§9.3/§9.6/§9.7) ──
     // 1. liveness: expire own stuck claims (distOf reads live d from this agent)
