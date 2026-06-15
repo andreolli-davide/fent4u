@@ -9,6 +9,7 @@ export interface PathResult {
   L: number // tick length; Infinity if unreachable
   firstStep: Step | null // null iff already at goal
   pushes: PlannedPush[]
+  timedOut: boolean // search hit budgetMs before settling — NOT proof of unreachability (§15.3)
 }
 
 export interface GridTile { type: TileType; dir?: Dir }
@@ -48,6 +49,11 @@ const DELTA: Record<Dir, { dx: number; dy: number }> = {
   right: { dx: 1, dy: 0 },
 }
 
+// A one-way tile blocks entry only *against* its arrow (GAME_RULES §Directional):
+// an '↑' tile rejects a `down` entry, permits up/left/right. So the forbidden
+// move is the OPPOSITE of the tile's dir — not "every dir but the arrow".
+const OPPOSITE: Record<Dir, Dir> = { up: 'down', down: 'up', left: 'right', right: 'left' }
+
 function isType5(grid: Grid, p: Pos): boolean {
   const t = grid.tiles.get(key(p))
   return t !== undefined && (t.type === 'slide' || t.type === 'crateSpawner')
@@ -57,30 +63,47 @@ function connectivityPreserved(grid: Grid, ctx: PlanCtx, vacated: Pos, occupied:
   if (ctx.protectedTiles.length < 2) return true
   const vk = key(vacated)
   const ok = key(occupied)
+  // Post-push occupancy: the crate now sits on `occupied` and has left `vacated`.
   const blocked = (p: Pos): boolean => {
     const k = key(p)
     if (k === ok) return true
     if (k === vk) return false
     return ctx.obstacles.crateAt.has(k)
   }
-  const passable = (p: Pos): boolean => {
+  const standable = (p: Pos): boolean => {
     const t = grid.tiles.get(key(p))
     return t !== undefined && t.type !== 'wall' && !blocked(p)
   }
-  const seen = new Set<string>()
-  const stack: Pos[] = [ctx.protectedTiles[0]]
-  seen.add(key(ctx.protectedTiles[0]))
-  while (stack.length > 0) {
-    const p = stack.pop()!
-    for (const { dx, dy } of Object.values(DELTA)) {
-      const np = { x: p.x + dx, y: p.y + dy }
-      const nk = key(np)
-      if (seen.has(nk) || !passable(np)) continue
-      seen.add(nk)
-      stack.push(np)
+  // One-ways make adjacency directed (same rule as canEnter), so a plain undirected
+  // flood would overstate reachability and could authorize a push that severs a
+  // region reachable only one-way. Certify the protected set is STRONGLY connected
+  // via a hub = protectedTiles[0]: hub reaches all (forward) AND all reach hub
+  // (reverse) ⇒ every pair is mutually reachable through the hub.
+  const hub = ctx.protectedTiles[0]
+  // edgeOk(p, np, dir): does a directed edge exist between geometric neighbours
+  // p and np (np = p + DELTA[dir])? Forward and reverse pass different predicates.
+  const flood = (edgeOk: (p: Pos, np: Pos, dir: Dir) => boolean): Set<string> => {
+    const seen = new Set<string>([key(hub)])
+    const stack: Pos[] = [hub]
+    while (stack.length > 0) {
+      const p = stack.pop()!
+      for (const { dir, dx, dy } of DIRS) {
+        const np = { x: p.x + dx, y: p.y + dy }
+        const nk = key(np)
+        if (seen.has(nk) || !standable(np) || !edgeOk(p, np, dir)) continue
+        seen.add(nk)
+        stack.push(np)
+      }
     }
+    return seen
   }
-  return ctx.protectedTiles.every((t) => seen.has(key(t)))
+  // forward edge p→np exists iff np is enterable moving `dir` (same as A*).
+  const fwd = flood((_p, np, dir) => canEnter(grid, np, dir))
+  if (!ctx.protectedTiles.every((t) => fwd.has(key(t)))) return false
+  // reverse: hub reachable FROM the set. Walk the reversed graph — edge np→p
+  // exists iff p is enterable moving OPPOSITE[dir] (the np→p direction).
+  const rev = flood((p, _np, dir) => canEnter(grid, p, OPPOSITE[dir]))
+  return ctx.protectedTiles.every((t) => rev.has(key(t)))
 }
 
 export function isPushAdmissible(grid: Grid, ctx: PlanCtx, cratePos: Pos, dir: Dir): boolean {
@@ -117,7 +140,7 @@ function isFloor(grid: Grid, p: Pos): boolean {
 function canEnter(grid: Grid, to: Pos, dir: Dir): boolean {
   const t = grid.tiles.get(key(to))
   if (t === undefined || t.type === 'wall') return false
-  if (t.type === 'oneway' && t.dir !== dir) return false
+  if (t.type === 'oneway' && t.dir !== undefined && dir === OPPOSITE[t.dir]) return false
   return true
 }
 
@@ -128,25 +151,74 @@ interface Node {
   g: number
   f: number
   firstStep: Step | null
+  seq: number // insertion order — final, deterministic tie-break (§9)
+}
+
+// Heap order: lower f wins; ties prefer the deeper node (larger g ⇒ smaller h,
+// fewer expansions); remaining ties broken by insertion order for determinism.
+function before(a: Node, b: Node): boolean {
+  if (a.f !== b.f) return a.f < b.f
+  if (a.g !== b.g) return a.g > b.g
+  return a.seq < b.seq
+}
+
+// Binary min-heap. Replaces the old O(V) linear scan of `open` — the linear scan
+// made large maps blow ctx.budgetMs, which (via the timeout path) then reported a
+// reachable goal as unreachable.
+class NodeHeap {
+  private readonly h: Node[] = []
+  get size(): number {
+    return this.h.length
+  }
+  push(n: Node): void {
+    const h = this.h
+    h.push(n)
+    let i = h.length - 1
+    while (i > 0) {
+      const p = (i - 1) >> 1
+      if (!before(h[i], h[p])) break
+      ;[h[i], h[p]] = [h[p], h[i]]
+      i = p
+    }
+  }
+  pop(): Node {
+    const h = this.h
+    const top = h[0]
+    const last = h.pop()!
+    if (h.length > 0) {
+      h[0] = last
+      let i = 0
+      for (;;) {
+        const l = 2 * i + 1
+        const r = l + 1
+        let s = i
+        if (l < h.length && before(h[l], h[s])) s = l
+        if (r < h.length && before(h[r], h[s])) s = r
+        if (s === i) break
+        ;[h[i], h[s]] = [h[s], h[i]]
+        i = s
+      }
+    }
+    return top
+  }
 }
 
 export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResult {
-  if (from.x === to.x && from.y === to.y) return { reachable: true, L: 0, firstStep: null, pushes: [] }
+  if (from.x === to.x && from.y === to.y) return { reachable: true, L: 0, firstStep: null, pushes: [], timedOut: false }
 
   const deadline = performance.now() + ctx.budgetMs
-  const usedPushDest = new Set<string>()
-  const open = new Map<string, Node>()
+  const open = new NodeHeap()
+  const bestG = new Map<string, number>() // best known g per tile — drives relaxation and stale-pop skips
   const closed = new Set<string>()
-  const start: Node = { pos: from, g: 0, f: manhattan(from, to), firstStep: null }
-  open.set(key(from), start)
+  let seq = 0
+  open.push({ pos: from, g: 0, f: manhattan(from, to), firstStep: null, seq: seq++ })
+  bestG.set(key(from), 0)
 
   while (open.size > 0) {
-    let cur: Node | null = null
-    for (const n of open.values()) if (cur === null || n.f < cur.f) cur = n
-    if (cur === null) break
-    if (performance.now() > deadline) return { reachable: false, L: Infinity, firstStep: null, pushes: [] }
+    if (performance.now() > deadline) return { reachable: false, L: Infinity, firstStep: null, pushes: [], timedOut: true }
+    const cur = open.pop()
     const ck = key(cur.pos)
-    open.delete(ck)
+    if (closed.has(ck)) continue // stale heap duplicate (lazy decrease-key)
     closed.add(ck)
 
     if (cur.pos.x === to.x && cur.pos.y === to.y) {
@@ -157,42 +229,35 @@ export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResu
         const cratePos = { x: from.x + d0.dx, y: from.y + d0.dy }
         pushes.push({ crateId: fp.crateId, from: cratePos, to: { x: cratePos.x + d0.dx, y: cratePos.y + d0.dy }, tickOffset: 0 })
       }
-      return { reachable: true, L: cur.g, firstStep: cur.firstStep, pushes }
+      return { reachable: true, L: cur.g, firstStep: cur.firstStep, pushes, timedOut: false }
     }
 
+    const g = cur.g + 1
     for (const { dir, dx, dy } of DIRS) {
       const np = { x: cur.pos.x + dx, y: cur.pos.y + dy }
       const nk = key(np)
       if (closed.has(nk)) continue
       if (!isFloor(grid, np) || !canEnter(grid, np, dir)) continue
       if (ctx.obstacles.agentAt.has(nk)) continue
+      let firstStep: Step
       if (ctx.obstacles.crateAt.has(nk)) {
-        // crate ahead: try an admissible push (skip when in crates-as-walls fallback)
-        // Only the first-step push is tracked per plan (§15.3 defers multi-push); enforce
-        // single-destination-per-search so two push edges cannot claim the same slide tile.
+        // crate ahead: try an admissible push (skip in crates-as-walls fallback).
+        // Only the first-step push is executed (§15.2/§15.3 defers multi-push), so no
+        // cross-branch destination dedup is needed — each A* path pushes any crate once.
         if (ctx.cratesAsWalls) continue
         if (!isPushAdmissible(grid, ctx, np, dir)) continue
-        const beyond = { x: np.x + DELTA[dir].dx, y: np.y + DELTA[dir].dy }
-        const beyondKey = key(beyond)
-        if (usedPushDest.has(beyondKey)) continue
         const crate = ctx.obstacles.crateAt.get(nk)!
-        const g = cur.g + 1
-        const existing = open.get(nk)
-        if (existing !== undefined && existing.g <= g) continue
-        usedPushDest.add(beyondKey)
-        const push: Step = { kind: 'push', dir, crateId: crate.id }
-        const firstStep: Step = cur.firstStep ?? push
-        open.set(nk, { pos: np, g, f: g + manhattan(np, to), firstStep })
-        continue
+        firstStep = cur.firstStep ?? { kind: 'push', dir, crateId: crate.id }
+      } else {
+        firstStep = cur.firstStep ?? { kind: 'move', dir }
       }
-      const g = cur.g + 1
-      const existing = open.get(nk)
-      if (existing !== undefined && existing.g <= g) continue
-      const firstStep: Step = cur.firstStep ?? { kind: 'move', dir }
-      open.set(nk, { pos: np, g, f: g + manhattan(np, to), firstStep })
+      const prev = bestG.get(nk)
+      if (prev !== undefined && prev <= g) continue
+      bestG.set(nk, g)
+      open.push({ pos: np, g, f: g + manhattan(np, to), firstStep, seq: seq++ })
     }
   }
-  return { reachable: false, L: Infinity, firstStep: null, pushes: [] }
+  return { reachable: false, L: Infinity, firstStep: null, pushes: [], timedOut: false }
 }
 
 export function d(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): number {

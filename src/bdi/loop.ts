@@ -221,6 +221,11 @@ export class BdiLoop {
 
   private async stepToward(beliefs: BeliefBase, ctx: PlanCtx, self: Pos, goal: Pos): Promise<void> {
     let res = planPath(this.grid, ctx, self, goal)
+    // Push-aware search hit its budget — NOT proof of unreachability. Re-plan with
+    // crates-as-walls, the safe anytime fallback (§15.3), instead of giving up.
+    if (res.timedOut) {
+      res = planPath(this.grid, { ...ctx, cratesAsWalls: true }, self, goal)
+    }
     if (res.firstStep?.kind === 'push') {
       const dir = res.firstStep.dir
       const cratePos = this.ahead(self, dir)
