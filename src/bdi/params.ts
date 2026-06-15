@@ -15,6 +15,7 @@ export interface Params {
   rebalance_period: number   // global rebalance cadence (ticks)
   auction_budget_ms: number  // anytime cap on the SSI auction (ms)
   theta_disp: number         // dispersion weight (tie-break-only)
+  partner_lost_ticks: number // no a2a from partner for this many ticks ⇒ degrade, reclaim its soft claims (§9.7/§11)
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -30,6 +31,7 @@ export const DEFAULT_PARAMS: Params = {
   rebalance_period: 15,
   auction_budget_ms: 8,
   theta_disp: 0.05,
+  partner_lost_ticks: 25,
 }
 
 type Range = [min: number, max: number]
@@ -46,6 +48,7 @@ const RANGES: Record<keyof Params, Range> = {
   rebalance_period: [1, 10000],
   auction_budget_ms: [0, 1000],
   theta_disp: [0, 4],
+  partner_lost_ticks: [1, 100000],
 }
 
 export function loadParams(path = 'config/params.yaml'): Params {

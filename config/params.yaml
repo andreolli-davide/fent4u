@@ -13,3 +13,4 @@ bid_wait: 1             # max wait for partner's same-epoch commit  [ticks]
 rebalance_period: 15    # global rebalance cadence  [ticks]
 auction_budget_ms: 8    # anytime cap on the SSI auction  [ms]
 theta_disp: 0.05        # dispersion weight (tie-break-only)
+partner_lost_ticks: 25  # no a2a from partner for this many ticks ⇒ reclaim its soft claims, degrade to solo  [ticks]
