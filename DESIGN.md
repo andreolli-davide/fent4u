@@ -6,10 +6,10 @@ header-includes:
   - \usepackage{booktabs}
 ---
 
-**Version:** 1.9 (single self-contained document: the full PDDL `FALLBACK` specification is now inlined as **§17**, translated to English, and the standalone `pddl-fallback-design.md` is removed)
-**Previously:** 1.8 (design-review fixes: PDDL `FALLBACK` folded in as the 6th kind with a unified `U_mission` and one shared push-aware cost estimator — §4.4, §5.5; `deadline`/`EXPIRED` added to the Mission schema/state machine — §4.2–4.3; sync-gate liveness & gate scoping — §8.5; `P_FEASIBLE_MIN` floor defined — §5.5/§12; `DECAY_INTERVAL_TICKS` unit collision closed throughout — §5); 1.7 (deadline urgency in `U_mission`, §5.5); 1.6 (execution selector §9.9, mission/contract lock precedence §9.10); 1.5 (BDI-only team orchestration — `U_team`, marginal-route SSI auction, rebalance, partner/enemy split); 1.4 (open-loop platform assumption, offline calibration §16)
+**Version:** 1.10 (adds the **LLM-agent back-end** as a second, switchable mission-handler beside the PDDL lane — full spec **§18**; generalises the single ON/OFF planning flag into a **static three-way switch** `OFF / LLM_AGENT / PDDL` at the handler level — §4.4, §17.3, §18.2; reframes the two agents as **Agent A = BDI** and **Agent B = LLM agent (dual-mode)** to match the exam brief, fixing the inverted role labels — Liaison ≡ B, Courier ≡ A, §2.1; adds the *when-to-use-which* guidance — §18.11 — and the LLM-branch tuning table — §18.9)
+**Previously:** 1.9 (single self-contained document: the full PDDL `FALLBACK` specification inlined as **§17**, translated to English, standalone `pddl-fallback-design.md` removed); 1.8 (design-review fixes: PDDL `FALLBACK` folded in as the 6th kind with a unified `U_mission` and one shared push-aware cost estimator — §4.4, §5.5; `deadline`/`EXPIRED` added to the Mission schema/state machine — §4.2–4.3; sync-gate liveness & gate scoping — §8.5; `P_FEASIBLE_MIN` floor defined — §5.5/§12; `DECAY_INTERVAL_TICKS` unit collision closed throughout — §5); 1.7 (deadline urgency in `U_mission`, §5.5); 1.6 (execution selector §9.9, mission/contract lock precedence §9.10); 1.5 (BDI-only team orchestration — `U_team`, marginal-route SSI auction, rebalance, partner/enemy split); 1.4 (open-loop platform assumption, offline calibration §16)
 **Builds on:** the single-agent utility-based BDI core (formerly `specs-draft.md`, removed from this repo; §5 restates everything this design relies on)
-**Scope:** two cooperating BDI agents + a natural-language special-mission system driven by an LLM
+**Scope:** two cooperating agents — **Agent A (BDI)** and **Agent B (LLM agent, dual-mode)** — plus a natural-language special-mission system whose handler is a static switch over three back-ends (typed utility · LLM-agent §18 · PDDL §17)
 
 ---
 
@@ -17,10 +17,12 @@ header-includes:
 
 Two agents must play Deliveroo.js together to maximise the **combined** score, while one of them additionally receives **special missions** as natural-language messages from the server. Missions are open-ended (the three tiers in the brief are only examples), so the system must absorb arbitrary instructions without hard-coding each one.
 
+> **Agent roles (exam brief).** **Agent A is a BDI agent**; **Agent B is an LLM agent**. In this design both agents run the same fast BDI core for **base play**, and B is **dual-mode**: it switches on its LLM-agent lane (§18) only while a mission is active and is otherwise a plain BDI player. Only B holds the server mission channel, the game-chat, and the LLM/planner lane (§2.1). PDDL extends B as one of the switchable mission back-ends (§17). This naming supersedes the earlier *Liaison/Courier* aliases: **Liaison ≡ Agent B**, **Courier ≡ Agent A**.
+
 Three principles drive the whole design:
 
 1. **The single-agent BDI core is untouched.** Everything new rides on top as injected intentions, utility hooks, and shared state. If the mission machinery is idle or broken, both agents still play correct base strategy.
-2. **The LLM never sits in the 50 ms loop.** It is an asynchronous *compiler* from text to a typed `Mission` object. Game latency is never gated on an LLM call.
+2. **No LLM and no planner ever sits in the 50 ms loop.** Every mission back-end — the typed utility compiler, the PDDL lane (§17), and the LLM-agent loop (§18) — runs **asynchronously** and only ever hands the BDI loop a ready `{plan, L}` it executes with cheap per-tick re-validation. Game latency is never gated on an LLM or planner call.
 3. **Everything is scored in one currency — reward points.** Missions, tolls, decay, and base delivery all reduce to the same utility units, so the existing utility selector resolves every trade-off with no bespoke "conflict resolver".
 
 > **Platform assumption — no reward feedback (open-loop execution).** The server never confirms whether a mission actually paid out: there is no signal that distinguishes a collected `+10` from a missed one, and no per-mission reward channel the agent can read back. Missions therefore execute **open-loop** — the agent compiles a message, acts on it, and *trusts* that the stated payoff materialises; it cannot detect or recover from a misread after the fact. Two consequences run through the rest of the design. **(a)** Because there is no recovery downstream, the conservative compilation rules are not optional polish but the *only* safeguard: the worst-case bias on ambiguous sign/hardness (§7.3) and the `P_feasible` map-validation gate (§3.1) are as load-bearing as the irreversibility guards on crate pushes (§15). A wrong "pursue" is silent and permanent. **(b)** Hyperparameter calibration cannot be online *for mission-related tunables* — with no observed mission reward there is nothing to learn from at runtime — so every **mission-related** tunable (§5.8) must be fixed **offline**, in simulation, before deployment (§16). The one observable exception is the agent's **own realised-delivery rate**: `ū_forgone` (§7.1) and `ρ_ref` (§5.5 clamp) are runtime running averages of *own* deliveries, which the agent *can* see (own pickups/putDowns are ground truth) — open-loop only blacks out *mission* payoffs, not the team's base throughput.
@@ -29,7 +31,7 @@ Three principles drive the whole design:
 
 ## 2. Architecture overview
 
-Two peer agents share a **blackboard** and each run the identical single-agent loop. The only asymmetry: the **Liaison** holds the channel to server mission messages and an async LLM lane; the **Courier** does not.
+Two peer agents share a **blackboard** and each run the identical single-agent BDI loop for base play. The only asymmetry: **Agent B (the LLM agent, alias Liaison)** holds the channel to server mission messages and the async LLM/planner lane; **Agent A (the BDI agent, alias Courier)** does not. B is **dual-mode** — fast BDI core for base play, LLM-agent lane switched on only while a mission is active (§18).
 
 ```mermaid
 flowchart TB
@@ -39,12 +41,12 @@ flowchart TB
         CHAT["Game chat"]
     end
 
-    subgraph Liaison["Agent A — Liaison"]
+    subgraph Liaison["Agent B — LLM agent (Liaison)"]
         LBDI["BDI loop (50ms)"]
-        LLM["Async LLM mission compiler"]
+        LLM["Async mission lane<br/>(compiler · LLM-agent §18 · PDDL §17)"]
     end
 
-    subgraph Courier["Agent B — Courier"]
+    subgraph Courier["Agent A — BDI (Courier)"]
         CBDI["BDI loop (50ms)"]
     end
 
@@ -63,16 +65,18 @@ flowchart TB
 
 ### 2.1 Agent roles
 
-| Aspect | Liaison (Agent A) | Courier (Agent B) |
-|--------|-------------------|-------------------|
-| Base play | full BDI, identical | full BDI, identical |
+| Aspect | Agent B — LLM agent (alias Liaison) | Agent A — BDI (alias Courier) |
+|--------|-------------------------------------|-------------------------------|
+| Base play | full BDI core, identical | full BDI core, identical |
 | Server mission channel | **yes** | no |
 | Game-chat read/write | **yes** | no |
-| LLM compiler lane | **yes** | no |
+| Mission lane (Call-1 compiler + LLM-agent §18 + PDDL §17) | **yes** | no |
 | Reads blackboard (beliefs, claims, mission, contract) | yes | yes |
 | Accepts injected mission intentions | yes | yes |
 
-The Courier is **not** a slave: during normal play it bids and acts autonomously. The Liaison only *proposes* contracts; it never micromanages the Courier's base behaviour. If the Liaison dies, the Courier keeps playing — it simply can no longer compile new missions.
+> **Note on the labels.** The earlier drafts labelled the LLM-holding agent "Agent A — Liaison"; the exam brief assigns **Agent A = BDI** and **Agent B = LLM agent**, so the LLM-holding agent is **Agent B**. The aliases *Liaison* (≡ B) and *Courier* (≡ A) are retained throughout the rest of this document for continuity.
+
+Agent A (Courier) is **not** a slave: during normal play it bids and acts autonomously. Agent B (Liaison) only *proposes* contracts; it never micromanages A's base behaviour. If B dies, A keeps playing — it simply can no longer compile new missions. B's LLM-agent lane is dormant outside missions, so when no mission is active B is indistinguishable from A at the BDI level.
 
 ### 2.2 The blackboard
 
@@ -259,7 +263,7 @@ flowchart LR
 
 ## 4. Mission taxonomy
 
-A message compiles into exactly one of **six** kinds — the first five are the typed *fast path*; `FALLBACK` is the catch-all routed to the PDDL planning lane (§4.4).
+A message compiles into exactly one of **six** kinds — the first five are the typed *fast path*; `FALLBACK` is the catch-all routed to whichever mission back-end the static switch selects (§4.4). The taxonomy below describes the **typed-utility view** (switch `OFF`, and the typed front of switch `PDDL`); under switch `LLM_AGENT` the LLM-agent loop (§18) handles every message directly through its tool registry, reproducing these same effects (a `QUERY` becomes an `answer()`, a `REWARD_SHAPER` a `set_reward_shaper()` call, etc.).
 
 | Kind | Meaning | Plugs into | Example message |
 |------|---------|-----------|-----------------|
@@ -268,7 +272,7 @@ A message compiles into exactly one of **six** kinds — the first five are the 
 | `REWARD_SHAPER` | reshapes delivery valuation via `m(k)`/`g(tile)` | `deliverBundle` + `U_collect` hold/collect | "Deliver stacks of exactly 3 to double the reward" |
 | `HARD_CONSTRAINT` | priced toll or absolute value filter | A\* edge cost / `value(S)` filter | "Do not go through (x,y) or lose 50" / "Deliver parcels >10 → no reward" |
 | `COORDINATION_CONTRACT` | joint goal for both agents | generic `Contract` | "Parcel picked by one agent and delivered by the other → +200" |
-| `FALLBACK` | none of the 5 fits → unseen mission structure | async PDDL planning lane (§4.4) | "Visit every tile of the left room while staying 3 away from any enemy" |
+| `FALLBACK` | none of the 5 fits → unseen mission structure | async mission back-end — LLM-agent (§18) or PDDL (§17), per the switch (§4.4) | "Visit every tile of the left room while staying 3 away from any enemy" |
 
 ### 4.1 Worked classification examples
 
@@ -354,19 +358,27 @@ stateDiagram-v2
 
 > **Slot semantics — platform-confirmed (R14).** A new mission message overwrites/replaces the previous one, so a single slot with teardown is exactly right. Should that ever change to stacking missions, the slot generalises to **one slot per kind** — at most one shaper, one constraint, one contract, … — with the same per-slot teardown discipline; nothing downstream changes, since each kind installs into a different hook.
 
-### 4.4 The `FALLBACK` kind — the PDDL planning lane
+### 4.4 The `FALLBACK` kind — the mission back-ends and the static switch
 
-The five typed kinds cover every *anticipated* mission structure; a genuinely unseen one (a coverage goal, a constrained traversal, a multi-parcel ordering) compiles to `FALLBACK`. Rather than hard-code each, `FALLBACK` is routed to an **asynchronous PDDL planning lane** that synthesises a plan from a fixed, versioned domain. The full specification — atom catalogue, `InitBuilder`/`ValidationGate`/planner pipeline, plan lifecycle, and the open-world flag — is §17; this section (§4.4) states only the three contracts that bind it to the rest of the design.
+The five typed kinds cover every *anticipated* mission structure; a genuinely unseen one (a coverage goal, a constrained traversal, a multi-parcel ordering) compiles to `FALLBACK`. Rather than hard-code each, `FALLBACK` is routed to an **asynchronous mission back-end** that synthesises a plan off the 50 ms loop. There are **two interchangeable back-ends behind one `{plan, L, V_plan, claimed[]}` contract**, selected by a **static three-way switch** (chosen before the run, never mid-game):
 
-1. **The planner sits *below* the selector, never beside it.** The PDDL lane is an asynchronous *compiler* exactly like the LLM mission compiler (§3): two LLM calls (semantic classification, then PDDL transcription against a validated atom vocabulary — never raw `:domain`/`:init`) produce a plan and its estimated length, off the 50 ms loop. The plan enters the per-tick argmax as the single candidate `U_mission` (§5.5, §9.9) — one decision point, no parallel resolver. While it compiles, both agents keep playing the installed mission or base strategy; a `FALLBACK` mission is invisible to the selector until it reaches `PLAN_READY` (§4.2 sub-states), equivalent to `P_feasible = 0` until then.
+- **`OFF`** → no back-end; out-of-the-5 missions → `NOT_APPLICABLE` → discarded. Pure typed-utility core; the conservative default when no sound model exists.
+- **`PDDL`** → the **PDDL planning lane** (full spec §17): a classical planner synthesises a plan from a fixed, versioned atom domain. Strong on combinatorial structure (ordering, coverage, constrained traversal) and gives in-model feasibility guarantees.
+- **`LLM_AGENT`** → the **LLM-agent back-end** (full spec §18): the course's ReAct + tool-registry agent, run off-loop against a world snapshot, emits the plan. This is the configuration in which **Agent B is a genuine LLM agent** (it handles the whole Challenge-2 spectrum — atomic requests, strategy adaptation, coordination — through its tools). Strong on open-ended / linguistic / non-plannable missions; no in-model guarantee.
 
-2. **One shared cost estimator (closes the cost-model asymmetry).** The plan length `L` and every `d(·,·)` the planner consumes come from the **same push-aware A\*** the rest of this design uses (§5.1, §15) — crates are treated as pushable, with **crates-as-walls only as the anytime fallback** when the push-aware search exceeds its budget. The PDDL `CostOracle` *is* that A\* (constraint-aware: tolls become edge costs, absolute constraints become graph masks; §7). It must **not** model crates as permanent hard walls, or the FALLBACK branch would score the same leg with a different `L` than a typed mission and skew the argmax. Same unit (ticks-to-goal), same estimator, both branches.
+The switch is **handler-level**, not merely fallback-lane: under `LLM_AGENT` the LLM-agent loop handles *every* mission (the typed taxonomy of §4 is reproduced through its tool registry, §18.5); under `PDDL` the typed front classifies and only plannable/unseen missions descend into the planner; under `OFF` only the typed-utility core runs. The two non-trivial back-ends share the same head (Call 1, §17.4) and tail (scoring §5.5, lifecycle §17.7, claims §17.8). **When to use which is §18.11.** The switch is runtime policy; the LLM knows nothing of it.
+
+The three contracts that bind any back-end to the rest of the design:
+
+1. **The back-end sits *below* the selector, never beside it.** It is an asynchronous *compiler* exactly like the LLM mission compiler (§3): it produces a plan and its estimated length off the 50 ms loop. The plan enters the per-tick argmax as the single candidate `U_mission` (§5.5, §9.9) — one decision point, no parallel resolver. While it compiles, both agents keep playing the installed mission or base strategy; a `FALLBACK` mission is invisible to the selector until it reaches `PLAN_READY` (§4.2 sub-states), equivalent to `P_feasible = 0` until then.
+
+2. **One shared cost estimator (closes the cost-model asymmetry).** The plan length `L` and every `d(·,·)` a back-end consumes come from the **same push-aware A\*** the rest of this design uses (§5.1, §15) — crates are treated as pushable, with **crates-as-walls only as the anytime fallback** when the push-aware search exceeds its budget. The PDDL `CostOracle` *is* that A\* (constraint-aware: tolls become edge costs, absolute constraints become graph masks; §7); the **LLM-agent back-end runs its emitted step-list through the very same A\*** to obtain `L` (§18.5, §18.9). It must **not** model crates as permanent hard walls, or a back-end would score the same leg with a different `L` than a typed mission and skew the argmax. Same unit (ticks-to-goal), same estimator, all branches.
 
 3. **One shared value scale (closes the `V_plan` asymmetry).** A FALLBACK plan that moves real parcels delivers value beyond its stated `payoff`; counting only `payoff` would understate it relative to base play. So the unified `U_mission` (§5.5) adds `V_plan` — the decayed value of parcels the plan itself delivers, via the **same kernel `V`** (§5.4) — to *every* mission's score, typed or fallback (it is simply `0` for missions that deliver no parcels, e.g. a pure coordinate intention or a query). Both branches are therefore scored on one scale.
 
-**Execution is single-agent, assigned by the existing bid (R-coord).** PDDL plans egocentrically (`me`); it never plans for two bodies. The mission is assigned to **one** agent via the same role/claim bidding used for contracts (§9.3, §9.10): only the assignee plans and sees `PLAN_READY` in its argmax, and it `MISSION`-locks the parcels its plan references (§9.10) so the partner does not contest them. Multi-agent coordination stays in the utility layer (claims + shared beliefs), never inside the planner — consistent with §8 (typed contracts) and §17.8.
+**Execution is single-agent, assigned by the existing bid (R-coord).** Both back-ends plan egocentrically (`me`); neither plans for two bodies. The mission is assigned to **one** agent via the same role/claim bidding used for contracts (§9.3, §9.10): only the assignee plans and sees `PLAN_READY` in its argmax, and it `MISSION`-locks the parcels its plan references (§9.10) so the partner does not contest them. Multi-agent coordination stays in the utility layer (claims + shared beliefs), never inside the planner — consistent with §8 (typed contracts), §17.8 and §18.8.
 
-**The flag — conservative default for the unseen.** The lane has a single runtime switch. **OFF:** out-of-the-5 missions resolve to `NOT_APPLICABLE` and are discarded — pure utility core, the safe default when no sound model exists. **ON:** the lane is live under a static-world planning assumption (§17.7.4). The flag is runtime policy; the LLM knows nothing of it.
+> **Note.** Since only **Agent B** holds the mission lane (§2.1), B is always the assignee/compiler; A executes its share only via claims and typed contracts. The static-world planning assumption (§17.7.4) governs both back-ends when active.
 
 ---
 
@@ -1322,7 +1334,9 @@ Offline calibration fixes good *static* defaults; it cannot adapt to a specific 
 
 ---
 
-## 17. The `FALLBACK` PDDL planning lane — detailed specification
+## 17. The PDDL back-end — detailed specification (`FALLBACK` planning lane)
+
+> This section specifies the **`PDDL` setting of the static switch** (§4.4). The alternative `LLM_AGENT` back-end — selected instead of, never alongside, this one — is **§18**; both share the head (Call 1, §17.4), the cost estimator (§17.6.2), the scoring (§17.6.1) and the lifecycle (§17.7).
 
 §4.4 introduced `FALLBACK` as the sixth mission kind and stated the three contracts that bind it to the rest of this design (planner-below-selector, one shared push-aware cost estimator, one shared value scale). This section is the full specification of that lane: the marker that routes a mission into it, the atom-based PDDL pipeline, the plan lifecycle, and how it re-enters the utility core. It was previously a standalone companion document (`pddl-fallback-design.md`); it now lives here so the design is one self-contained artifact.
 
@@ -1366,12 +1380,13 @@ The six-kind taxonomy is §4; this is the routing view — which subsystem owns 
 
 Route 2 gives `FALLBACK` an *objective* trigger independent of the LLM's judgment; the escalation uses the abstract intent that call 1 emits regardless (§17.4). Before descending into PDDL, **exactly one** reclassification attempt is allowed with the failed kind excluded from the schema — a grounding-fail often means "the *second* typed kind was right", not "outside the five".
 
-**The flag (single switch on the planning layer).**
+**The switch (static three-way, §4.4).** The single planning flag generalises to a three-way, statically-chosen switch:
 
-- **OFF** → the PDDL layer does not exist at runtime. Out-of-the-5 missions → `NOT_APPLICABLE` → **discarded**. Pure utility core. This is the *conservative default* for never-seen missions: with no sound model, do not act.
-- **ON** → planning layer live, **under a static-world assumption** (§17.7.4). Out-of-the-5 → `FALLBACK` → PDDL.
+- **OFF** → no back-end exists at runtime. Out-of-the-5 missions → `NOT_APPLICABLE` → **discarded**. Pure utility core. This is the *conservative default* for never-seen missions: with no sound model, do not act.
+- **PDDL** → **this** lane is live, **under a static-world assumption** (§17.7.4). Out-of-the-5 → `FALLBACK` → PDDL.
+- **LLM_AGENT** → the §18 back-end is live instead; this PDDL lane is dormant. (Handler-level: under `LLM_AGENT` the LLM-agent also handles the typed kinds via its tools, §18.2.)
 
-The `FALLBACK` vs `NOT_APPLICABLE` disposition is **runtime policy**, not classification: the LLM knows nothing of the flag.
+The `FALLBACK` vs `NOT_APPLICABLE` disposition and the choice of back-end are **runtime policy**, not classification: the LLM knows nothing of the switch.
 
 **The non-falsifiable residue.** The dangerous misroute is the opposite of route 2: the LLM forces a genuinely novel mission into a typed kind that *grounds* but means the wrong thing. Grounding catches "references something absent", not "grounds but is semantically wrong". This **mis-fit is irreducible in open-loop**; it cannot be closed by another LLM check (itself non-falsifiable). It is **contained** downstream by the runtime safety net (§17.6.6). Two guards at different levels: the marker lowers the error's probability, the safety net bounds its consequences.
 
@@ -1519,6 +1534,8 @@ The classical planner is exact: a plan found = feasible *in the model*. The real
 - `α` = length discount. `α = 1` → `payoff/(L+1)` is literally points/tick, dimensionally clean. The `+1` avoids divide-by-zero.
 
 `θ` and the clamp are distinct, composed on purpose: `θ` damps *always* (humility), the clamp is a *ceiling* that bites only when the payoff is implausible.
+
+> **Per-back-end humility.** The PDDL back-end uses `θ_pddl = 0.6` (§17.6.7). The **LLM-agent back-end is less verifiable** — its plan is generated text with no in-model feasibility guarantee — so it uses a **lower `θ_llm = 0.45`** and a **tighter rate ceiling `c_llm = 1.2`** (full LLM-branch tuning in §18.9). Its `P_feasible` stays binary `{1,0}` (validity + grounding), with all the extra humility carried by `θ_llm` to avoid double-counting.
 
 #### 17.6.6 Runtime safety net
 
@@ -1687,4 +1704,177 @@ Coordination happens at the **utility level**, not the planning level, over shar
 
 ---
 
-*End of design v1.9 — inlines the full PDDL `FALLBACK` specification as §17 (translated to English) and removes the standalone `pddl-fallback-design.md`, making this the single self-contained design document; all prior cross-references to the companion file now point at §17.x. Previous: v1.8 — design-review pass: folds the PDDL `FALLBACK` lane in as the 6th mission kind (§4.4) with a single unified `U_mission` (`min(θ·P_feasible·(payoff+V_plan)·max(1/(L+1), 1/(s+1)), c·ρ_ref)`, §5.5) and one shared push-aware cost estimator across typed and fallback branches (closes the V_plan and cost-model asymmetries, §4.4); adds `deadline`/`EXPIRED` to the Mission schema and state machine (§4.2–4.3); specifies sync-gate liveness — gate-check scoping to an active SYNC_GATE contract and partner-loss teardown that clears the gate (§8.5, §11); defines the `P_FEASIBLE_MIN` floor as a hard drop from the argmax (§5.5, §12); closes the `DECAY_INTERVAL` unit collision by pinning §5.3/§5.8 to `DECAY_INTERVAL_TICKS`; plus minors (four-candidate §5 diagram, `STALE_TTL`→9, `z*` re-choice note, claim-field naming, mission-related-only offline calibration). Previous: v1.7 — adds deadline urgency to `U_mission` (§5.5): the rate gains a slack shadow-price term, `payoff·max(1/(L+1), 1/(s+1))` with slack `s = deadline_next − t_now − L`, so a deadline-bound mission/contract escalates to win the argmax exactly at its latest departure instead of being dawdled away on roadside parcels, while `P_feasible` becomes time-aware (zero past the deadline, discounted just before by the a2a/replan uncertainty already tracked — no new knob); urgency tracks the *next* barrier for multi-barrier contracts (§8.6), and no-deadline missions reduce to the prior formula. Previous: v1.6 — adds the execution selector (§9.9): the productive intentions collapse into one `U_route` candidate that the per-tick argmax ranks against `U_mission`/`U_explore`/`U_idle`, route internals frozen between auctions, emitting the next A\* step — the missing bridge from §9 routes to the §5.5 selector (also §5.5 note, §5.7 diagram). Adds mission/contract lock precedence (§9.10): a claim carries an `origin` (`AUCTION` | `MISSION`); `MISSION`-locked parcels are excluded from the auction pool (§9.3) and the rebalance union (§9.6), live by the mission deadline not `CLAIM_TTL`, and release on teardown (§4.3) — separating soft per-tick scheduling from hard lifetime ownership, with roles bound once at contract commit. Previous: v1.5 — rewrites §9 into team-optimal BDI-only orchestration (explicit `U_team`, marginal-route SSI auction, periodic global rebalance, dispersion) and splits partner (collaborator, via claims) from enemy (competitor, via `raceDiscount`) in §5.3 & §9.4; new hyperparameters in §12. v1.4, no-reward-feedback / open-loop assumption (§1, §11) and offline calibration (§16); v1.3, common belief base (§2.3) and freshness-weighted race discount (§5.3); v1.2, crate handling (§15); v1.1, consistency review against `game-rules.md`.*
+## 18. The LLM-agent back-end — detailed specification
+
+§4.4 makes `FALLBACK` resolvable by either of two interchangeable mission back-ends behind one `{plan, L, V_plan, claimed[]}` contract. §17 is the **PDDL** back-end. This section is the full specification of the **LLM-agent** back-end: the in-context agentic loop (ReAct + tool registry) of the course's *LLM-based Agents* tutorial, adapted to run **off the 50 ms loop** and to feed the same utility core. It is the `LLM_AGENT` setting of the static switch (§18.2) and, when selected, is the **primary mission handler** — it covers the whole Challenge-2 spectrum (atomic requests, strategy adaptation, coordination), not just unseen-structure missions.
+
+The LLM-agent sits **below** the selector exactly like the PDDL lane: it is an asynchronous *compiler* from a mission message to a ready `{plan, L}` the BDI loop executes. The LLM never drives `move()` live; it reasons against a world snapshot and emits a plan. This is the one deliberate divergence from the tutorial's Step 9 (live `move()` in the loop) — justified in §18.12(c).
+
+### 18.1 Design invariants
+
+Parallel to §17.1:
+
+1. **One decision point** — the §9.9 argmax; the plan enters as the single `U_mission` candidate.
+2. **The utility core is untouched** — the back-end adds an option, not a new selector.
+3. **Open-loop** — no payoff confirmation; conservative compilation is the only safeguard (§1).
+4. **No clarification questions** — ambiguous / non-groundable → discarded (R13).
+5. **The BDI loop never blocks** — the ReAct loop runs off the 50 ms loop; the selector reads only ready plans.
+6. **LLM-agent is a back-end, not a replacement** — the typed-utility path and PDDL stay available via the switch.
+7. **The LLM acts *only* through the tool registry** (§18.5) — it never reads the raw grid, computes geometry (§3.1), or touches the a2a wire directly; the runtime mediates every effect.
+
+### 18.2 The static three-way switch (handler-level)
+
+The single planning flag of §17.3 generalises to a **static** three-way switch, chosen before the run, governing the **whole mission handler**:
+
+- **OFF** → typed utility core only; out-of-the-5 → `NOT_APPLICABLE` → discarded. Conservative default.
+- **PDDL** → typed classification + the §17 PDDL lane for plannable / unseen missions (static-world assumption, §17.7.4).
+- **LLM_AGENT** → the LLM-agent loop is the mission handler for **every** mission: it reads the NL message and uses tools to answer, move, reshape policy, or coordinate. This is the configuration in which **Agent B is a genuine LLM agent** (course requirement; exam weight 30%).
+
+The three are mutually exclusive. To exercise **both** the LLM requirement (30%) and the PDDL requirement (20%), demonstrate `LLM_AGENT` and `PDDL` in **separate runs** and compare them in the report (§18.12). The switch is runtime policy; the LLM knows nothing of it.
+
+### 18.3 Pipeline
+
+Reuses the shared head and tail of §17; only the middle differs:
+
+```
+[SHARED] Call 1 — LLM-Mission     → kind, payoff, deadline, abstractIntent   (§17.4)
+[NEW]    ReAct loop (LLM-agent)    → step-list + policy-ops + messages         (§18.4, §18.6)
+[SHARED] Gate: ground coords + push-aware A* → L,  kernel V → V_plan           (§4.4, §5.4, §15)
+[SHARED] §17.7 lifecycle           → PLAN_READY → argmax (U_mission) → tick-by-tick execution
+```
+
+Call 1 is kept because `payoff` / `deadline` feed `U_mission` identically for both back-ends. The PDDL back-end runs `Call 1 → Call 2 (LLM-PDDL) → planner`; the LLM-agent runs `Call 1 → ReAct loop`. Same head, same tail.
+
+### 18.4 Execution model — ReAct on a frozen snapshot
+
+The ReAct loop must produce a plan **off-loop**, so it runs against a snapshot of the belief base taken at `t0`:
+
+- **read tools** read the frozen snapshot (positions, parcels, zones, partner) and return real observations — no latency, because the work is off-loop;
+- **action tools** (`goto`, `pickup`, `deliver`, `wait`) **do not act**: they are **recorded as plan steps** and their effects **forward-applied** to the snapshot (deterministic and egocentric: `goto`→`at`=target, `pickup`→parcel carried, `deliver`→delivered). So a later `get_my_position` returns the *simulated* position after the steps chosen so far.
+
+The "simulation" is therefore **not** a heavy simulator — only the deterministic forward-application of the agent's **own** action effects, consistent with the static-world planning assumption (§17.7.4); enemies are not modelled. Genuine ReAct (Thought / Action / Observation) is preserved, but it yields a *plan* instead of driving live actions; the real movement is executed afterward by the BDI runtime under the §17.7 lifecycle (prefix re-validation, invalidation, claims).
+
+**Batching rule.** In one turn the agent may emit **several tool calls iff they are independent** (one's result is not needed to formulate another) and **side-effect-free**. Read / perception tools are batchable → resolved together in a single round-trip. Action tools are **sequential** (each forward-applies to the snapshot, so step `n+1`'s observation depends on step `n`).
+
+**Loop guard (updated from the tutorial's Step 7).** The "≤ 1 Action per output" rule becomes: *N independent, side-effect-free tool calls per turn allowed*; no `FinalAnswer` in a turn with pending tool calls; at most `BATCH_MAX` calls per turn.
+
+**API.** Batching maps naturally to **native function-calling** (the OpenAI-compatible LiteLLM proxy's `tool_calls` array carries several calls in one assistant message). The textual `Action: / Action Input:` format of the slides is kept only as a didactic reference.
+
+**Born-stale guard.** When the plan lands, the §17.7.2 Phase-B freshness check applies: if the belief-signature changed materially since `t0`, the plan is born stale → one re-plan from a fresh snapshot, else `PLAN_FAIL`. The coherence horizon is `≈ 3 · DECAY_INTERVAL_TICKS` (one `P_surv` half-life, §5.3) — not a new knob.
+
+### 18.5 The tool registry (five families)
+
+The course's registry (`get_my_position`, `move`, `calculate`, …) is expanded into five families. Read tools hit the snapshot; action tools become plan steps; the LLM never computes geometry (§3.1) — coordinates are transcribed-and-validated or returned by `route_cost` / localization tools.
+
+| Family | Tools | Effect |
+|---|---|---|
+| **Perception (read)** | `get_my_position`, `scan_world`, `get_parcel(id)`, `list_delivery_zones`, `route_cost(from,to)`, `get_partner_status` | read the snapshot; **batchable** |
+| **World actions (steps)** | `goto(target)`, `pickup(parcelId)`, `deliver(zone)`, `wait(n)` | recorded as steps + forward-applied |
+| **Strategy (policy hooks)** | `set_reward_shaper(m,g)`, `add_constraint(tile,penalty)`, `set_zone_value(...)`, `clear_policy()` | install hooks into the shared utility core (§6 / §7) — Challenge-2 level 2 |
+| **Coordination** | `message_partner(...)`, `claim_parcel(id)`, `propose_contract(...)` | structured writes to the blackboard (§18.8) — level 3 |
+| **Free-form answer & utilities** | `calculate(expr)`, `answer(text)` | atomic requests — level 1 |
+
+Notes:
+
+- `goto(target)` is the plan step (a leg costed by the shared A\*, ≈ `TaskNav`), **not** `move(direction)`; `move` is kept only for the faithful tutorial demo. So `L` comes out in the same tick unit as every typed mission (requirement 8).
+- `calculate(expr)` is a **safe** evaluator: a restricted-grammar AST parser (numbers, `+ - * / % ^`, parentheses, whitelist `abs / min / max / floor / ceil / round / sqrt`), **arbitrary precision** (BigInt / bignumber) — never the tutorial's raw `eval` (whose own slides flag it as unsafe, Step 3). It returns the *exact* product on large integers — the Step 3/4 exercise point: float64 and the LLM's mental arithmetic get it wrong. It has **dual use**: free-form answers *and* coordinate formulas (§3.1: `"x=4*2"`→`8`, then validated vs the map). Invalid input → `{ok:false, error}` → graceful answer, or ground-fail (`P_feasible = 0`) for a coordinate.
+- `answer(text)` posts the reply to the mission-agent and is terminal for a `QUERY`; pure trivia is answered from the model's own knowledge with no other tool.
+- The registry is the **twin of the PDDL atom catalogue** (`goto` ≈ `TaskNav`, `pickup`/`deliver` ≈ `TaskCollectDeliver`, `add_constraint` ≈ a `CostOracle` mask): same capabilities, two front-ends.
+
+### 18.6 The loop and memory
+
+```
+scratchpad = [ system_prompt, mission_text, snapshot_brief ]
+for i in 1..MAX_ITERS (temperature 0):
+    reply = LLM(scratchpad)                       # native function-calling
+    parse: Thought + (tool_calls[]) | FinalAnswer
+    guard: tool_calls independent & side-effect-free if >1; no FinalAnswer with pending calls
+    for each tool_call:
+        read   → observation from the snapshot
+        action → record step, forward-apply, observation = new simulated state
+        policy/coord → record policy-op / structured message
+        answer → post reply (QUERY path)
+        scratchpad += Observation
+    if FinalAnswer → STOP
+emit (step-list, policy-ops, messages)
+```
+
+- `MAX_ITERS` bounds planning effort (anti-loop, required by the tutorial). The output is the ordered step-list plus any policy-ops and structured messages.
+- **Memory** = the shared belief base (world) + a **per-mission scratchpad** kept **separate** from game memory (the Step-7 exercise discipline). No cross-mission chat memory; Call 1 is cached by mission identity (§17.4), so the same message classifies the same way.
+- One async promise per mission, never re-fired every tick (as §17.7.1).
+
+### 18.7 The system prompt (the contract)
+
+As in the tutorial (Steps 4 / 8), the system prompt is where the role is set. It contains: the tool list and signatures; the `Thought / tool-call / FinalAnswer` protocol; when **not** to use a tool (atomic info → `answer()`); the rule **"for any arithmetic call `calculate`, never compute yourself"** (Steps 3–4); the **conservative bias** (ambiguous sign / hardness → treat as a constraint to avoid, §4.1, §7.3). A **symbolic** snapshot is injected (own position, zones, relevant parcels as POIs with id and reward, partner status) — **not** the raw grid. Two–three few-shot examples cover the three Challenge-2 levels. Prompt engineering is iterative (Step 4 of the tutorial); the report documents the final prompts.
+
+### 18.8 Communication and coordination
+
+The principle (§17.8 extended): **natural language only between B and the mission-agent**; **everything B tells A is structured**, over the blackboard / a2a. A is a controlled BDI with no LLM and cannot parse NL.
+
+- **B ↔ mission-agent** — game chat, NL, via `answer()`.
+- **B ↔ A** — structured: `claim_parcel` (a `claim{origin=MISSION}`, §9.10), `propose_contract` (a typed `Contract` with §8 step-lists / `BARRIER`s), belief deltas. `message_partner` is **not** chat — it announces a committed intention that enters A's BeliefSet (§17.8).
+- **B-lane ↔ B-core** — the plan / policy-ops install into B's own mission slot and utility hooks; B's 50 ms loop executes them.
+
+The LLM emits a **tool call**; the **runtime** validates it and writes the delta to the a2a channel; replication propagates to A (§2.3.5). The LLM never touches the wire — the loop and channel stay deterministic.
+
+Challenge-2 mapping: **L1 atomic** → `answer()` / `calculate` or a single `goto`; **L2 adapt** → policy hooks that reshape the shared utility core (persist, affect both agents, executed by the fast loops); **L3 coordinate** → a typed `Contract` + `claim`, with A taking its role via the existing bidding (§9.3, §17.8).
+
+### 18.9 Reintegration and scoring
+
+The plan is scored by the **same unified `U_mission`** as §5.5 / §17.6 — no second formula. After `FinalAnswer`, the step-list is costed by the shared push-aware A\* → `L` (ticks), and `V_plan` by the kernel `V` (§5.4). The branch carries the extra humility belts because it is the **least verifiable** plan source:
+
+- **`θ_llm` < `θ_pddl`** — at equal score a verified / PDDL option beats an invented one.
+- **`P_feasible` binary `{1,0}`** (validity + grounding, as PDDL under flag ON); all extra humility is in `θ_llm` to avoid double-counting.
+- **rate ceiling `c_llm · ρ_ref`** tighter than the global `c` — a hallucinated payoff shows up as an implausible rate and is capped harder.
+- the §17.6.6 safety net applies in full (per-mission tick budget, anti-phantom guard, every-tick argmax re-run), and matters more here.
+
+**LLM-branch tuning (starting values, tune in testing — §17.12 spirit).** All tick-derived constants come from `DECAY_INTERVAL_TICKS` (§5).
+
+| Parameter | Value (range) | Meaning |
+|---|---|---|
+| `temperature` | **0** | deterministic, as Call 1 |
+| `MAX_ITERS` | **12** (8–16) | max ReAct turns per mission |
+| `MAX_ITERS_QUERY` | **3** | turns for an atomic request (`answer`) |
+| `BATCH_MAX` | **6** | independent tool calls per turn |
+| `θ_llm` | **0.45** (0.35–0.55) | humility weight; below `θ_pddl = 0.6` |
+| `P_feasible` | **{1,0}** | validity-based (humility lives in `θ_llm`) |
+| `c_llm` | **1.2** (1.0–1.5) | rate-ceiling factor; below global `c = 1.5` |
+| `budget_llm` | **2.5·L₀** (2–3·L₀) | ticks invested before abandon (`PLAN_FAIL`) |
+| `N_guard` | **8** ticks no progress → suppress ~15 | anti-phantom (inherited §17.6.7) |
+| `K_supp` | **2** (vs 3 PDDL) | suppressions of one mission → abandon |
+| `K_block` | **5** | physical-blocking escalation (§17.7.4) |
+| `RETRY` | **1** | on `PLAN_FAIL`, gate error in the prompt |
+| coherence horizon | **≈ 3·DECAY_INTERVAL_TICKS** | born-stale window (= one `P_surv` half-life) |
+
+### 18.10 Failure modes
+
+Loop exhausts `MAX_ITERS` / incoherent plan / gate failure → one `RETRY` (error in prompt) → `PLAN_FAIL`, mission discarded (open-loop, no clarification, R13). Born-stale at landing → one re-plan, else `PLAN_FAIL`. `SUPERSEDED` on a new message in any state (abort the async promise, tear down installed effects / claims, §4.3 / §17.7.1). If B dies, A keeps base play on structured beliefs (R8); if A dies, B still compiles missions but cannot execute two-body contracts.
+
+### 18.11 When to use which back-end
+
+The switch is global and static, but the *appropriateness* per mission class is the report's "where and when to use the planner" argument:
+
+| Mission class | Best handler | Why |
+|---|---|---|
+| Atomic info / `calculate` / single move (L1) | **LLM-agent** | no planning; NL and arithmetic |
+| Strategy reshape: stacks / zones / avoid (L2) | **typed utility hooks** (or LLM-agent installing them) | reward reshaping, not a goal |
+| Known coordination: handoff / rendezvous / gate (L3) | **typed `Contract` §8** | needs barrier sync and soundness |
+| Multi-parcel ordering, dependent sequencing | **PDDL** | combinatorial, in-model guarantees |
+| Coverage / constrained traversal | **PDDL** (or a sweep heuristic) | structured goal, completeness |
+| Novel / ambiguous / NL-heavy structure | **LLM-agent** | flexibility, no fixed domain |
+
+Three rules: **LLM-agent** for open-ended, linguistic, or non-plannable missions; **PDDL** for genuinely combinatorial structured planning where in-model guarantees matter (valuable in open-loop, where PDDL gives `P_feasible = 1` and the LLM does not); **typed utility** for pure economic reshaping and already-known coordination (the deterministic fast path).
+
+### 18.12 Compliance with the exam brief and the course tutorial
+
+**Requirements met.** BDI Agent A (sense / revise-beliefs / revise-intentions / collect-deliver — §2.3, §5.6, §5–6); team coordination (§2.2, §9, §17.8); LLM Agent B atomic requests (§18.5 family 5), strategy adaptation (family 3), coordination with A and the mission-agent (§18.8); tools / prompt-engineering / communication to describe in the report (§18.5–18.8); PDDL extends B as a back-end (§17). Course-tutorial components are all present: LLM controller + planning (ReAct loop), memory (shared beliefs + per-mission scratchpad), tool usage (the registry), execution loop, model-selected actions, prompt engineering.
+
+**Three points made explicit (so nothing is hidden):**
+
+- **(a) Switch semantics are handler-level.** `LLM_AGENT` makes the LLM-agent the handler of *every* mission, so B genuinely demonstrates the agentic loop on Challenge-2 L1–L3 (the 30%) — not only on unseen-structure missions. If the LLM were confined to a narrow residual fallback, the 30% LLM criterion would be served by the *compiler*, not the *agent loop* — a deliberate trap avoided here.
+- **(b) PDDL-use risk.** The static switch is mutually exclusive: in `LLM_AGENT` the PDDL lane is off. To secure the 20%, demonstrate `PDDL` in a **separate run** *and* include at least one genuinely plannable mission (ordering / coverage / constrained traversal). PDDL extends **B only** here (A is left as pure BDI by choice), which satisfies "extend A *and/or* B".
+- **(c) Off-loop divergence from tutorial Step 9.** The course integrates the LLM agent by calling `move()` **live in the loop**; this design runs the same ReAct loop **off-loop** to respect the 50 ms budget, executing the resulting plan through the BDI runtime. It satisfies the functional requirements (handle / adapt / coordinate) and must be **justified in the report** by the latency constraint — it is a strength when argued, not a gap.
+
+---
+
+*End of design v1.10 — adds the **LLM-agent back-end** (§18) as the second, switchable mission-handler beside the PDDL lane (§17), behind one shared `{plan, L, V_plan, claimed[]}` contract; generalises the ON/OFF planning flag into a **static three-way switch** `OFF / LLM_AGENT / PDDL` at the handler level (§4.4, §17.3, §18.2); reframes the two agents as **Agent A = BDI** and **Agent B = LLM agent (dual-mode)** to match the exam brief, fixing the inverted Liaison/Courier role labels (Liaison ≡ B, Courier ≡ A — §1, §2.1); specifies the LLM-agent loop end to end (ReAct on a frozen snapshot with batched independent tool calls, five-family tool registry incl. a safe arbitrary-precision `calculate`, structured B↔A communication, per-back-end humility `θ_llm`/`c_llm`, LLM-branch tuning table — §18.3–18.10); adds the *when-to-use-which* guidance (§18.11) and an explicit exam/tutorial compliance note with the three caveats — handler-level switch, PDDL-use risk, off-loop divergence from tutorial Step 9 (§18.12). Previous: v1.9 — inlines the full PDDL `FALLBACK` specification as §17 (translated to English) and removes the standalone `pddl-fallback-design.md`, making this the single self-contained design document; all prior cross-references to the companion file now point at §17.x. Previous: v1.8 — design-review pass: folds the PDDL `FALLBACK` lane in as the 6th mission kind (§4.4) with a single unified `U_mission` (`min(θ·P_feasible·(payoff+V_plan)·max(1/(L+1), 1/(s+1)), c·ρ_ref)`, §5.5) and one shared push-aware cost estimator across typed and fallback branches (closes the V_plan and cost-model asymmetries, §4.4); adds `deadline`/`EXPIRED` to the Mission schema and state machine (§4.2–4.3); specifies sync-gate liveness — gate-check scoping to an active SYNC_GATE contract and partner-loss teardown that clears the gate (§8.5, §11); defines the `P_FEASIBLE_MIN` floor as a hard drop from the argmax (§5.5, §12); closes the `DECAY_INTERVAL` unit collision by pinning §5.3/§5.8 to `DECAY_INTERVAL_TICKS`; plus minors (four-candidate §5 diagram, `STALE_TTL`→9, `z*` re-choice note, claim-field naming, mission-related-only offline calibration). Previous: v1.7 — adds deadline urgency to `U_mission` (§5.5): the rate gains a slack shadow-price term, `payoff·max(1/(L+1), 1/(s+1))` with slack `s = deadline_next − t_now − L`, so a deadline-bound mission/contract escalates to win the argmax exactly at its latest departure instead of being dawdled away on roadside parcels, while `P_feasible` becomes time-aware (zero past the deadline, discounted just before by the a2a/replan uncertainty already tracked — no new knob); urgency tracks the *next* barrier for multi-barrier contracts (§8.6), and no-deadline missions reduce to the prior formula. Previous: v1.6 — adds the execution selector (§9.9): the productive intentions collapse into one `U_route` candidate that the per-tick argmax ranks against `U_mission`/`U_explore`/`U_idle`, route internals frozen between auctions, emitting the next A\* step — the missing bridge from §9 routes to the §5.5 selector (also §5.5 note, §5.7 diagram). Adds mission/contract lock precedence (§9.10): a claim carries an `origin` (`AUCTION` | `MISSION`); `MISSION`-locked parcels are excluded from the auction pool (§9.3) and the rebalance union (§9.6), live by the mission deadline not `CLAIM_TTL`, and release on teardown (§4.3) — separating soft per-tick scheduling from hard lifetime ownership, with roles bound once at contract commit. Previous: v1.5 — rewrites §9 into team-optimal BDI-only orchestration (explicit `U_team`, marginal-route SSI auction, periodic global rebalance, dispersion) and splits partner (collaborator, via claims) from enemy (competitor, via `raceDiscount`) in §5.3 & §9.4; new hyperparameters in §12. v1.4, no-reward-feedback / open-loop assumption (§1, §11) and offline calibration (§16); v1.3, common belief base (§2.3) and freshness-weighted race discount (§5.3); v1.2, crate handling (§15); v1.1, consistency review against `game-rules.md`.*
