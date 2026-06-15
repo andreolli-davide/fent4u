@@ -32,16 +32,18 @@ export interface PlanCtx {
 }
 
 export const key = (p: Pos): string => `${p.x},${p.y}`
+// Server convention (GAME_RULES.md §Movement): up = dy +1, down = dy -1.
+// These direction→delta tables must match the wire, not screen intuition.
 const DIRS: { dir: Dir; dx: number; dy: number }[] = [
-  { dir: 'up', dx: 0, dy: -1 },
-  { dir: 'down', dx: 0, dy: 1 },
+  { dir: 'up', dx: 0, dy: 1 },
+  { dir: 'down', dx: 0, dy: -1 },
   { dir: 'left', dx: -1, dy: 0 },
   { dir: 'right', dx: 1, dy: 0 },
 ]
 
 const DELTA: Record<Dir, { dx: number; dy: number }> = {
-  up: { dx: 0, dy: -1 },
-  down: { dx: 0, dy: 1 },
+  up: { dx: 0, dy: 1 },
+  down: { dx: 0, dy: -1 },
   left: { dx: -1, dy: 0 },
   right: { dx: 1, dy: 0 },
 }
