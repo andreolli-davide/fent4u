@@ -41,11 +41,13 @@ async function boot(config: Config, params: Params): Promise<void> {
   let booted = false
   client.onPerception((snap) => {
     if (!booted) {
-      blackboard = new Blackboard(loop.beliefBase(snap), { self: 'courier', partner: 'liaison', send, logger })
+      blackboard = new Blackboard(loop.beliefBase(snap), { self: 'courier', partner: 'liaison', send, logger, partnerTtl: params.partner_lost_ticks })
       blackboard.hello(snap.tick)
       booted = true
     }
-    void loop.tick(snap)
+    // partnerAlive: heartbeat-backed channel liveness (§9.7/§11), the authority for degradation.
+    // false until first contact (partnerLastSeenTick = -Infinity) ⇒ degraded solo at boot.
+    void loop.tick(snap, blackboard?.partnerAlive(snap.tick) ?? false)
       .then(() => blackboard?.onTick(snap.tick))
       .catch((err: unknown) => log?.error({ err }, 'tick error'))
   })
