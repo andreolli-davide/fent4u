@@ -7,7 +7,10 @@ import { decayConsts, pAvail, deliverBundle, tileKey, type DecayConsts, type Ene
 import { buildRoute, uRoute, routeFromClaims } from './route.js'
 import { select, chooseExplore, matches, type Intention, type Candidate } from './intentions.js'
 import type { Params } from './params.js'
-import { ClaimStore } from '../coordination/claims.js'
+import { ClaimStore, type ClaimMsg, type Claim } from '../coordination/claims.js'
+import { runAuction, type AgentSnap } from '../coordination/auction.js'
+import { runRebalance, type RebalanceAgent } from '../coordination/rebalance.js'
+import type { A2AMessage, AgentId } from '../types/a2a.js'
 
 type LogFn = {
   info: (obj: Record<string, unknown>, msg?: string) => void
@@ -24,12 +27,14 @@ export class BdiLoop {
   private committed: Intention | null = null
   private committedU = 0
   private acting = false
+  private lastRebalanceTick = -Infinity
 
   constructor(
     private readonly client: DeliverooClient,
     private readonly params: Params,
     private readonly log: LogFn,
     private readonly claims: ClaimStore = new ClaimStore(),
+    private readonly coord?: { partner: AgentId; send: (msg: A2AMessage) => void },
   ) {
     this.grid = buildGrid(client.map)
     this.dc = decayConsts(client.consts)
@@ -52,6 +57,51 @@ export class BdiLoop {
     const self = beliefs.self.pos
     const ctx = this.planCtx(beliefs)
     const dist = (a: Pos, b: Pos): number => planPath(this.grid, ctx, a, b).L
+
+    // ── coordination (§9.3/§9.6/§9.7) ──
+    // 1. liveness: expire own stuck claims (distOf reads live d from this agent)
+    const dropped = this.claims.expire(tnow, (c) => {
+      const p = beliefs.parcels.get(c.parcelId)
+      return p ? dist(self, p.pos) : Infinity
+    }, this.params.claim_ttl)
+    for (const c of dropped) this.broadcast({ kind: 'release', parcelId: c.parcelId, epoch: tnow })
+
+    if (this.coord) {
+      const me = this.client.role
+      const partner = beliefs.agents.get(this.coord.partner) ?? null
+      // build both agent snapshots from shared beliefs
+      const carried = beliefs.self.carrying.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
+      const meSnap: AgentSnap = { id: me, pos: self, carried, claimed: this.claimedParcels(beliefs, me) }
+      const partnerSnap: AgentSnap = partner
+        ? { id: this.coord.partner, pos: partner.pos, carried: this.carriedOf(beliefs, this.coord.partner), claimed: this.claimedParcels(beliefs, this.coord.partner) }
+        : { id: this.coord.partner, pos: self, carried: [], claimed: [] } // degraded: no partner bids
+      const enemies = [...beliefs.agents.values()].filter((a) => a.rel === 'enemy')
+      const { pool } = this.buildPool(beliefs, self, tnow, dist)
+      // 2. auction the unclaimed pool (deterministic; commit only own wins)
+      const agents: [AgentSnap, AgentSnap] = me < this.coord.partner ? [meSnap, partnerSnap] : [partnerSnap, meSnap]
+      const alloc = runAuction({ pool, agents, enemies, zones: this.grid.deliveryZones, dist, dc: this.dc, params: this.params, tnow, epoch: tnow, budgetMs: this.params.auction_budget_ms })
+      for (const [parcelId, winner] of alloc) {
+        if (winner !== me) continue
+        const p = beliefs.parcels.get(parcelId)!
+        const claim: Claim = { parcelId, agentId: me, origin: 'AUCTION', epoch: tnow, commitTick: tnow, originD: dist(self, p.pos), lastD: dist(self, p.pos), lastProgressTick: tnow }
+        this.claims.add(claim)
+        this.broadcast({ kind: 'claim', claim })
+      }
+      // 3. periodic rebalance (or on own route finish)
+      const routeFinished = this.claims.ownClaims(me).length === 0
+      if (tnow - this.lastRebalanceTick >= this.params.rebalance_period || routeFinished) {
+        this.lastRebalanceTick = tnow
+        const ra: [RebalanceAgent, RebalanceAgent] = [
+          { id: agents[0].id, pos: agents[0].pos, carried: agents[0].carried, claimed: agents[0].claimed },
+          { id: agents[1].id, pos: agents[1].pos, carried: agents[1].carried, claimed: agents[1].claimed },
+        ]
+        const swaps = runRebalance({ agents: ra, claims: [...this.claims.ownClaims(me), ...this.claims.ownClaims(this.coord.partner)], enemies, zones: this.grid.deliveryZones, dist, dc: this.dc, params: this.params, tnow, epoch: tnow })
+        for (const s of swaps) {
+          this.claims.applyMsg({ kind: 'swap', parcelId: s.parcelId, toAgent: s.toAgent, epoch: tnow }, me)
+          this.broadcast({ kind: 'swap', parcelId: s.parcelId, toAgent: s.toAgent, epoch: tnow })
+        }
+      }
+    }
 
     // candidates
     const carried = beliefs.self.carrying.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
@@ -171,6 +221,12 @@ export class BdiLoop {
       const got = await this.client.pickup()
       const ids = got.length > 0 ? got.map((g) => g.id) : [...beliefs.parcels.values()].filter((p) => p.pos.x === beliefs.self.pos.x && p.pos.y === beliefs.self.pos.y && p.carriedBy === null).map((p) => p.id)
       beliefs.applyPickup(ids)
+      for (const id of ids) {
+        if (this.claims.claimedBy(id) === this.client.role) {
+          this.claims.remove(id)
+          this.broadcast({ kind: 'release', parcelId: id, epoch: 0 })
+        }
+      }
     } finally {
       this.acting = false
     }
@@ -203,5 +259,23 @@ export class BdiLoop {
     for (const s of this.spawners) {
       if (Math.abs(s.x - self.x) + Math.abs(s.y - self.y) <= obs) this.seenAt.set(tileKey(s), tick)
     }
+  }
+
+  private broadcast(msg: ClaimMsg): void {
+    if (!this.coord) return
+    this.coord.send({ from: this.client.role, to: this.coord.partner, type: 'claims', payload: msg })
+  }
+
+  /** Parcels claimed by `who` that are present and not yet picked, as ParcelBeliefs. */
+  private claimedParcels(beliefs: BeliefBase, who: AgentId): ParcelBelief[] {
+    return this.claims.ownClaims(who)
+      .map((c) => beliefs.parcels.get(c.parcelId))
+      .filter((p): p is ParcelBelief => p !== undefined && p.carriedBy === null)
+  }
+
+  private carriedOf(beliefs: BeliefBase, who: AgentId): ParcelBelief[] {
+    const ag = beliefs.agents.get(who)
+    const ids = ag?.carrying ?? []
+    return ids.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
   }
 }
