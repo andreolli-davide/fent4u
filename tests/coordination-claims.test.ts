@@ -12,7 +12,7 @@ test('add / claimedBy / ownClaims / partnerClaimed', () => {
   expect(s.claimedBy('p1')).toBe('courier')
   expect(s.claimedBy('p3')).toBeNull()
   expect(s.ownClaims('courier').map((c) => c.parcelId)).toEqual(['p1'])
-  expect([...s.partnerClaimed('courier')]).toEqual(['p2'])
+  expect([...s.partnerClaimed('courier')].sort()).toEqual(['p2'])
 })
 
 test('expire drops claims with no progress for CLAIM_TTL ticks', () => {
@@ -31,4 +31,27 @@ test('expire keeps a claim that is still making progress', () => {
   const dropped = s.expire(12, () => 4, 10) // 9 ticks since last progress < 10 → kept
   expect(dropped).toEqual([])
   expect(s.claimedBy('moving')).toBe('courier')
+})
+
+test('expire keeps MISSION claims regardless of TTL', () => {
+  const s = new ClaimStore()
+  s.add(claim('locked', 'courier', { origin: 'MISSION', lastD: 5, lastProgressTick: 0 }))
+  const dropped = s.expire(100, () => 5, 10)
+  expect(dropped).toEqual([])
+  expect(s.claimedBy('locked')).toBe('courier')
+})
+
+test('ownClaims returns sorted by parcelId', () => {
+  const s = new ClaimStore()
+  s.add(claim('z-parcel', 'courier'))
+  s.add(claim('a-parcel', 'courier'))
+  s.add(claim('m-parcel', 'courier'))
+  expect(s.ownClaims('courier').map((c) => c.parcelId)).toEqual(['a-parcel', 'm-parcel', 'z-parcel'])
+})
+
+test('remove deletes a claim', () => {
+  const s = new ClaimStore()
+  s.add(claim('p1', 'courier'))
+  s.remove('p1')
+  expect(s.claimedBy('p1')).toBeNull()
 })
