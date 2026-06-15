@@ -1,8 +1,9 @@
 // tests/coordination-integration.test.ts
 // Task 12: two-agent integration test verifying that two BDI loops divide a
 // parcel field with no double-chase.  Both replicas run identical deterministic
-// runAuction on sorted inputs and converge to the same allocation without any
-// negotiation round-trip (DESIGN §9.3).
+// runAuction on sorted inputs (DESIGN §9.3).  When ticked in parallel at the
+// same epoch, same-epoch conflicts on both parcels are resolved by lower agentId:
+// 'courier' < 'liaison' (lexicographic), so courier wins p1 and liaison wins p2.
 import { test, expect } from 'bun:test'
 import { BdiLoop } from '../src/bdi/loop.js'
 import { DEFAULT_PARAMS } from '../src/bdi/params.js'
@@ -148,19 +149,12 @@ test(
     expect(liaisonClaims.claimedBy('p1')).toBe('courier')
     expect(liaisonClaims.claimedBy('p2')).toBe('liaison')
 
-    // Movement assertions: courier moves right (toward p1 at x=2 from x=1),
-    // liaison moves left (toward p2 at x=9 from x=10).
-    // These confirm no double-chase; we only assert if moves were recorded (they
-    // may be absent if the loop idled, which is a no-double-chase outcome too).
-    if (courierRec.moves.length > 0) {
-      expect(courierRec.moves.some((d) => d === 'right')).toBe(true)
-      // courier must never go left toward delivery (would be chasing the wrong parcel)
-      expect(courierRec.moves.every((d) => d !== 'left')).toBe(true)
-    }
-    if (liaisonRec.moves.length > 0) {
-      expect(liaisonRec.moves.some((d) => d === 'left')).toBe(true)
-      // liaison must never go right toward p1's side
-      expect(liaisonRec.moves.every((d) => d !== 'right')).toBe(true)
-    }
+    // Movement assertions: courier (x=1) steps right toward p1 (x=2);
+    // liaison (x=10) steps left toward p2 (x=9). Both have claimed parcels
+    // by tick 2, so movement is guaranteed (not optional).
+    expect(courierRec.moves.length).toBeGreaterThan(0)
+    expect(courierRec.moves.every((d) => d === 'right')).toBe(true)
+    expect(liaisonRec.moves.length).toBeGreaterThan(0)
+    expect(liaisonRec.moves.every((d) => d === 'left')).toBe(true)
   },
 )
