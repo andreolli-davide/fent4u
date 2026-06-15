@@ -2,12 +2,14 @@ import { makeLogger } from '../logger.js'
 import { connect } from '../external/deliveroo.js'
 import { Blackboard } from '../blackboard/blackboard.js'
 import { BdiLoop } from '../bdi/loop.js'
+import { ClaimStore, isClaimMsg } from '../coordination/claims.js'
 import type { WorkerEnvelope, A2AMessage } from '../types/a2a.js'
 import type { Config } from '../types/config.js'
 import type { Params } from '../bdi/params.js'
 
 let log: ReturnType<typeof makeLogger> | null = null
 let blackboard: Blackboard | null = null
+let claims: ClaimStore | null = null
 let booting = false
 
 function send(msg: A2AMessage): void {
@@ -26,10 +28,15 @@ async function boot(config: Config, params: Params): Promise<void> {
   }
   const client = await connect(config, 'courier', logger)
 
+  claims = new ClaimStore()
+
   const loop = new BdiLoop(client, params, {
     info: (obj, msg) => log!.info(obj as object, msg),
     debug: (obj, msg) => log!.debug(obj as object, msg),
     warn: (obj, msg) => log!.warn(obj as object, msg),
+  }, claims, {
+    partner: 'liaison',
+    send,
   })
   let booted = false
   client.onPerception((snap) => {
@@ -53,5 +60,9 @@ self.onmessage = (event: MessageEvent<WorkerEnvelope>) => {
     void boot(envelope.config, envelope.params)
     return
   }
-  if (envelope.kind === 'a2a') blackboard?.receive(envelope.data)
+  if (envelope.kind === 'a2a') {
+    const msg = envelope.data
+    if (msg.type === 'claims' && isClaimMsg(msg.payload)) claims?.applyMsg(msg.payload, 'courier')
+    else blackboard?.receive(msg)
+  }
 }
