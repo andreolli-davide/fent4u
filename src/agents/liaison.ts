@@ -62,7 +62,9 @@ self.onmessage = (event: MessageEvent<WorkerEnvelope>) => {
   }
   if (envelope.kind === 'a2a') {
     const msg = envelope.data
-    if (msg.type === 'claims' && isClaimMsg(msg.payload)) claims?.applyMsg(msg.payload, 'liaison')
-    else blackboard?.receive(msg)
+    if (msg.type === 'claims' && isClaimMsg(msg.payload)) {
+      if (claims !== null) claims.applyMsg(msg.payload, 'liaison')
+      else log?.debug({ type: msg.type }, 'claims msg dropped — boot in progress')
+    } else blackboard?.receive(msg)
   }
 }
