@@ -263,11 +263,41 @@ export async function connect(
     })
 
   // perception
+  // Buffer the most recent sensing payload so that if the initial sensing event
+  // arrives before onPerception() is called (a real race: server fires
+  // computeSensing() synchronously on connection, before the client has had a
+  // chance to register its callback), we can replay it immediately when the
+  // caller does register.
   let perceptionCb: ((s: PerceptionSnapshot) => void) | null = null
+  let bufferedSensing: IOSensing | null = null
+  let lastRawSensing: IOSensing | null = null
+  let lastSensingMs = 0
   socket.onSensing((io) => {
-    if (!perceptionCb) return
+    logger.debug({ role, hasCallback: perceptionCb !== null }, 'sensing-raw')
+    lastRawSensing = io
+    lastSensingMs = Date.now()
+    if (!perceptionCb) {
+      bufferedSensing = io
+      return
+    }
     perceptionCb(normalizeSensing(io, me, tick(), logger))
   })
+
+  // Heartbeat: re-fire the last known sensing when the server's sensor goes quiet.
+  // This covers two cases:
+  //   (a) the agent's move was blocked (no position change → sensor never dirty again)
+  //   (b) static environment with no NPCs or parcel events within range
+  // Threshold: 3 clock periods — enough to see a real sensing if the server is
+  // healthy, but short enough that blocked agents recover within 3 ticks.
+  const heartbeatMs = 3 * consts.CLOCK
+  const heartbeatTimer = setInterval(() => {
+    if (!perceptionCb || lastRawSensing === null) return
+    if (Date.now() - lastSensingMs >= heartbeatMs) {
+      logger.debug({ role }, 'sensing heartbeat — firing stale snapshot')
+      lastSensingMs = Date.now()
+      perceptionCb(normalizeSensing(lastRawSensing, me, tick(), logger))
+    }
+  }, consts.CLOCK)
 
   // lifecycle
   socket.onConnect(() => logger.info({ role }, 'connected'))
@@ -284,6 +314,11 @@ export async function connect(
 
     onPerception: (cb) => {
       perceptionCb = cb
+      if (bufferedSensing !== null) {
+        logger.debug({ role }, 'replaying buffered sensing')
+        perceptionCb(normalizeSensing(bufferedSensing, me, tick(), logger))
+        bufferedSensing = null
+      }
     },
     onConnect: (cb) => socket.onConnect(cb),
     onDisconnect: (cb) => socket.onDisconnect(cb),
@@ -301,6 +336,7 @@ export async function connect(
     shout: role === 'liaison' ? (msg) => logReject('shout', socket.emitShout(msg)) : missionOnly,
 
     close: () => {
+      clearInterval(heartbeatTimer)
       socket.disconnect()
       logger.info({ role }, 'client closed')
     },
