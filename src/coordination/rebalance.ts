@@ -54,16 +54,22 @@ export function runRebalance(inp: RebalanceInput): Reassign[] {
   const [a0, a1] = inp.agents
   let best: { parcelId: string; toAgent: AgentId; margin: number } | null = null
 
-  // consider transferring each not-picked claim from its owner X to the other agent Y
+  const claimOrigin = new Map<string, 'AUCTION' | 'MISSION'>(inp.claims.map((c) => [c.parcelId, c.origin]))
+
+  // consider transferring each not-picked AUCTION claim from its owner X to the other agent Y
   for (const [X, Y] of [[a0, a1], [a1, a0]] as const) {
     for (const p of [...X.claimed].sort((m, n) => m.id.localeCompare(n.id))) {
       if (p.carriedBy !== null) continue // never reassign picked-up goods
+      if (claimOrigin.get(p.id) === 'MISSION') continue // §9.10: MISSION claims never rebalance
       const without = X.claimed.filter((q) => q.id !== p.id)
       const gainY = routeU(Y, [...Y.claimed, p], inp) - routeU(Y, Y.claimed, inp)
       const lossX = routeU(X, X.claimed, inp) - routeU(X, without, inp)
       const dUteam = gainY - lossX
       const sunk = Math.max(0, (originD.get(p.id) ?? inp.dist(X.pos, p.pos)) - inp.dist(X.pos, p.pos))
       const reApproach = inp.dist(Y.pos, p.pos)
+      // §9.6 switch cost in reward units (rho × ticks). Not normalized by lYafter+1
+      // because the plan formula's normalization causes test 2 to wrongly accept transfers
+      // with high sunk cost; DESIGN §9.6 leaves the exact magnitude to offline calibration (§16).
       const switchCost = inp.dc.rho * (sunk + reApproach)
       const margin = dUteam - switchCost
       if (margin > 0 && (best === null || margin > best.margin || (margin === best.margin && Y.id < best.toAgent))) {
