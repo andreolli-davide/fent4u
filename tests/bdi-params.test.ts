@@ -29,3 +29,16 @@ test('out-of-range value throws', () => {
 test('non-number value throws', () => {
   expect(() => loadParams(tmpFile('alpha: "fast"\n'))).toThrow(/alpha/)
 })
+
+test('coordination defaults are present and sane', () => {
+  expect(DEFAULT_PARAMS.claim_ttl).toBe(10)
+  expect(DEFAULT_PARAMS.bid_wait).toBe(1)
+  expect(DEFAULT_PARAMS.rebalance_period).toBe(15)
+  expect(DEFAULT_PARAMS.auction_budget_ms).toBe(8)
+  expect(DEFAULT_PARAMS.theta_disp).toBeGreaterThan(0)
+})
+
+test('out-of-range coordination key throws', () => {
+  // a 0-tick CLAIM_TTL would expire every claim instantly — reject it
+  expect(() => loadParams('tests/fixtures/params-bad-ttl.yaml')).toThrow()
+})

@@ -10,6 +10,11 @@ export interface Params {
   h_commit: number
   eps_idle: number
   push_plan_budget_ms: number
+  claim_ttl: number          // soft-claim expiry if no progress (ticks)
+  bid_wait: number           // max wait for partner's same-epoch commit (ticks)
+  rebalance_period: number   // global rebalance cadence (ticks)
+  auction_budget_ms: number  // anytime cap on the SSI auction (ms)
+  theta_disp: number         // dispersion weight (tie-break-only)
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -20,6 +25,11 @@ export const DEFAULT_PARAMS: Params = {
   h_commit: 0.15,
   eps_idle: 0.001,
   push_plan_budget_ms: 8,
+  claim_ttl: 10,
+  bid_wait: 1,
+  rebalance_period: 15,
+  auction_budget_ms: 8,
+  theta_disp: 0.05,
 }
 
 type Range = [min: number, max: number]
@@ -31,6 +41,11 @@ const RANGES: Record<keyof Params, Range> = {
   h_commit: [0, 2],
   eps_idle: [0, 1],
   push_plan_budget_ms: [0, 1000],
+  claim_ttl: [1, 1000],
+  bid_wait: [0, 100],
+  rebalance_period: [1, 10000],
+  auction_budget_ms: [0, 1000],
+  theta_disp: [0, 4],
 }
 
 export function loadParams(path = 'config/params.yaml'): Params {

@@ -1,8 +1,15 @@
 # BDI hyperparameters (DESIGN §5.8)
 alpha: 1.0
 beta_comp: 0.7
-theta_explore: 0.3
-kappa_info: 0.1
+theta_explore: 0.1
+kappa_info: 0.3
 h_commit: 0.15
 eps_idle: 0.001
 push_plan_budget_ms: 8
+
+# Coordination (DESIGN §9 / §12). Omit a key to take its default.
+claim_ttl: 10           # soft-claim expiry if no progress  [ticks]
+bid_wait: 1             # max wait for partner's same-epoch commit  [ticks]
+rebalance_period: 15    # global rebalance cadence  [ticks]
+auction_budget_ms: 8    # anytime cap on the SSI auction  [ms]
+theta_disp: 0.05        # dispersion weight (tie-break-only)
