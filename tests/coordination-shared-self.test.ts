@@ -65,7 +65,13 @@ test('coordination commit uses shared (last-tick) self pos for originD, not live
   }
   await loop.tick(snap2)
 
+  // Tick 1 had no prevSelf, so the `?? self` fallback measured A's originD from
+  // the live tick-1 pos x=5 → dist(x5, x2) = 3.
+  const claimA = claims.ownClaims('courier').find((c) => c.parcelId === 'A')
+  expect(claimA?.originD).toBe(3)
+
+  // Tick 2 used the SHARED self (prevSelf = x5), not live x=9, for B's originD:
+  // dist(x5, x6) = 1, not dist(x9, x6) = 3.
   const claimB = claims.ownClaims('courier').find((c) => c.parcelId === 'B')
-  expect(claimB).toBeDefined()
-  expect(claimB!.originD).toBe(1) // from shared self x=5, NOT live x=9 (which would be 3)
+  expect(claimB?.originD).toBe(1)
 })
