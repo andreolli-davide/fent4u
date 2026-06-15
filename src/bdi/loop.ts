@@ -119,7 +119,17 @@ export class BdiLoop {
       : buildRoute(carried, pool, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf)
     const cands: Candidate[] = []
     if (route !== null) cands.push({ intention: { kind: 'route', route }, u: uRoute(route, tnow, this.dc, this.params, weightOf) })
-    const ex = chooseExplore(this.spawners, this.seenAt, self, tnow, dist, this.params)
+    let partnerTarget: Pos | null = null
+    if (this.coord) {
+      const partner = beliefs.agents.get(this.coord.partner) ?? null
+      const pClaims = this.claimedParcels(beliefs, this.coord.partner)
+      const pRoute = pClaims.length > 0
+        ? routeFromClaims(this.carriedOf(beliefs, this.coord.partner), pClaims, partner?.pos ?? self, this.grid.deliveryZones, tnow, this.dc, this.params, dist)
+        : null
+      partnerTarget = pRoute?.pickups[0]?.pos ?? partner?.pos ?? null
+    }
+    const dRef = this.grid.w + this.grid.h
+    const ex = chooseExplore(this.spawners, this.seenAt, self, tnow, dist, this.params, partnerTarget, dRef)
     if (ex !== null) cands.push(ex)
     cands.push({ intention: { kind: 'idle' }, u: this.params.eps_idle })
 
