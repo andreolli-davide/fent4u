@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { buildRoute, uRoute } from '../src/bdi/route.js'
+import { buildRoute, uRoute, routeFromClaims } from '../src/bdi/route.js'
 import { decayConsts, pAvail, rnow, type EnemyThreat } from '../src/bdi/utility.js'
 import { DEFAULT_PARAMS } from '../src/bdi/params.js'
 import type { GameConsts, Pos } from '../src/types/perception.js'
@@ -67,4 +67,17 @@ test('a contested route is worth strictly less than the same route at full value
   const r = buildRoute([], [parcel('r', 5, 0, 10)], { x: 3, y: 0 }, zones, 0, dc, DEFAULT_PARAMS, manhattan)!
   const contested = (q: ParcelBelief): number => (q.id === 'r' ? 0.3 : 1)
   expect(uRoute(r, 0, dc, DEFAULT_PARAMS, contested)).toBeLessThan(uRoute(r, 0, dc, DEFAULT_PARAMS))
+})
+
+// ── routeFromClaims: service a committed parcel set in full (§9.7) ──────────
+
+test('routeFromClaims includes every claimed parcel (never drops a low-value one)', () => {
+  // a worthless far parcel that buildRoute's emergent horizon would drop is still serviced
+  const claimed = [parcel('near', 2, 0, 10), parcel('far', 40, 0, 1)]
+  const r = routeFromClaims([], claimed, { x: 1, y: 0 }, zones, 0, dc, DEFAULT_PARAMS, manhattan)!
+  expect(r.pickups.map((p) => p.id).sort()).toEqual(['far', 'near'])
+})
+
+test('routeFromClaims of an empty commitment is null', () => {
+  expect(routeFromClaims([], [], { x: 1, y: 0 }, zones, 0, dc, DEFAULT_PARAMS, manhattan)).toBeNull()
 })
