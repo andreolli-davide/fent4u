@@ -123,8 +123,8 @@ export class BdiLoop {
     if (this.coord) {
       const partner = beliefs.agents.get(this.coord.partner) ?? null
       const pClaims = this.claimedParcels(beliefs, this.coord.partner)
-      const pRoute = pClaims.length > 0
-        ? routeFromClaims(this.carriedOf(beliefs, this.coord.partner), pClaims, partner?.pos ?? self, this.grid.deliveryZones, tnow, this.dc, this.params, dist)
+      const pRoute = (partner !== null && pClaims.length > 0)
+        ? routeFromClaims(this.carriedOf(beliefs, this.coord.partner), pClaims, partner.pos, this.grid.deliveryZones, tnow, this.dc, this.params, dist)
         : null
       partnerTarget = pRoute?.pickups[0]?.pos ?? partner?.pos ?? null
     }
