@@ -39,3 +39,16 @@ test('a parcel claimed by the partner is not pursued (P_avail=0, §9.4)', async 
   expect(rec.moves).toEqual([]) // idles / explores, does not chase a partner's parcel
   expect(rec.pickups).toBe(0)
 })
+
+test('a free parcel is auctioned to self and broadcast as a claim', async () => {
+  const rec = fakeClient(rowMap())
+  const claims = new ClaimStore()
+  const sent: unknown[] = []
+  const loop = new BdiLoop(rec.client, DEFAULT_PARAMS, { info: () => {}, debug: () => {}, warn: () => {} }, claims, {
+    partner: 'liaison', send: (m) => sent.push(m),
+  })
+  await loop.tick(snap({ self: { id: 'me', name: 'me', teamId: 'A', pos: { x: 3, y: 0 }, score: 0 }, parcels: [pcl('p1', 4)] }))
+  // self is the only agent the auction sees as present → wins p1
+  expect(claims.claimedBy('p1')).toBe('courier')
+  expect(sent.some((m) => (m as { type: string }).type === 'claims')).toBe(true)
+})
