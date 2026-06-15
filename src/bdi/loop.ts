@@ -82,7 +82,7 @@ export class BdiLoop {
       const alloc = runAuction({ pool, agents, enemies, zones: this.grid.deliveryZones, dist, dc: this.dc, params: this.params, tnow, epoch: tnow, budgetMs: this.params.auction_budget_ms })
       for (const [parcelId, winner] of alloc) {
         if (winner !== me) continue
-        const p = beliefs.parcels.get(parcelId)!
+        const p = beliefs.parcels.get(parcelId)! // safe: pool ⊆ beliefs.parcels, parcels not mutated between buildPool and here
         const claim: Claim = { parcelId, agentId: me, origin: 'AUCTION', epoch: tnow, commitTick: tnow, originD: dist(self, p.pos), lastD: dist(self, p.pos), lastProgressTick: tnow }
         this.claims.add(claim)
         this.broadcast({ kind: 'claim', claim })
@@ -170,6 +170,7 @@ export class BdiLoop {
     for (const p of beliefs.parcels.values()) {
       if (p.carriedBy !== null) continue
       if (partnerClaimed.has(p.id)) continue // §9.4: partner-claimed ⇒ P_avail = 0 for me
+      if (this.claims.claimedBy(p.id) === this.client.role) continue // own claim already committed — exclude from pool to prevent re-auction resetting originD
       const dSelfP = dist(self, p.pos)
       if (!Number.isFinite(dSelfP)) continue
       const threats: EnemyThreat[] = enemies.map((e) => ({ age: tnow - e.lastSeen, dToP: dist(e.pos, p.pos) }))
