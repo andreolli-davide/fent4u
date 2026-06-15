@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { ClaimStore, type Claim } from '../src/coordination/claims.js'
+import { ClaimStore, isClaimMsg, type Claim, type ClaimMsg } from '../src/coordination/claims.js'
 
 const claim = (parcelId: string, agentId: 'liaison' | 'courier', over: Partial<Claim> = {}): Claim => ({
   parcelId, agentId, origin: 'AUCTION', epoch: 1, commitTick: 0, originD: 5, lastD: 5, lastProgressTick: 0, ...over,
@@ -54,4 +54,33 @@ test('remove deletes a claim', () => {
   s.add(claim('p1', 'courier'))
   s.remove('p1')
   expect(s.claimedBy('p1')).toBeNull()
+})
+
+test('applyMsg: claim then release converges', () => {
+  const s = new ClaimStore()
+  s.applyMsg({ kind: 'claim', claim: claim('p1', 'liaison') }, 'courier')
+  expect(s.claimedBy('p1')).toBe('liaison')
+  s.applyMsg({ kind: 'release', parcelId: 'p1', epoch: 1 }, 'courier')
+  expect(s.claimedBy('p1')).toBeNull()
+})
+
+test('applyMsg: same-epoch conflict resolves to lower agent id', () => {
+  const s = new ClaimStore()
+  s.add(claim('p1', 'liaison')) // local owner: liaison
+  // partner 'courier' also claims p1 at the same epoch; 'courier' < 'liaison' → courier wins
+  s.applyMsg({ kind: 'claim', claim: claim('p1', 'courier') }, 'liaison')
+  expect(s.claimedBy('p1')).toBe('courier')
+})
+
+test('applyMsg: higher-id incoming claim does not override the lower-id local owner', () => {
+  const s = new ClaimStore()
+  s.add(claim('p1', 'courier')) // local owner: courier (lower id)
+  s.applyMsg({ kind: 'claim', claim: claim('p1', 'liaison') }, 'courier')
+  expect(s.claimedBy('p1')).toBe('courier')
+})
+
+test('isClaimMsg guards malformed payloads', () => {
+  expect(isClaimMsg({ kind: 'claim', claim: claim('p1', 'courier') })).toBe(true)
+  expect(isClaimMsg({ kind: 'nope' })).toBe(false)
+  expect(isClaimMsg(null)).toBe(false)
 })
