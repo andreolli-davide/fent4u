@@ -1,7 +1,7 @@
 import type { Pos } from '../types/perception.js'
 import type { ParcelBelief } from '../blackboard/beliefs.js'
 import type { Params } from './params.js'
-import { rate, vValue, M1, G1, W1, type DecayConsts, type ParcelWeight } from './utility.js'
+import { rate, vValue, bestZone, M1, G1, W1, type DecayConsts, type ParcelWeight } from './utility.js'
 
 export interface Route {
   pickups: ParcelBelief[] // ordered parcels to collect
@@ -32,17 +32,18 @@ export function uRoute(r: Route, tnow: number, dc: DecayConsts, params: Params, 
 
 function score(self: Pos, carried: ParcelBelief[], pickups: ParcelBelief[], zones: Pos[], tnow: number, dc: DecayConsts, params: Params, dist: Dist, weight: ParcelWeight): { route: Route; u: number } | null {
   const delivered = [...carried, ...pickups]
-  let bestZ: Pos | null = null
-  let bestU = -Infinity
-  let bestL = Infinity
-  for (const z of zones) {
-    const L = routeLength(self, pickups, z, dist)
-    if (!Number.isFinite(L)) continue
-    const u = rate(vValue(delivered, z, L, tnow, dc, M1, G1, weight), L, params.alpha)
-    if (u > bestU) { bestU = u; bestZ = z; bestL = L }
-  }
-  if (bestZ === null) return null
-  return { route: { pickups, zone: bestZ, delivered, L: bestL }, u: bestU }
+  // §9.2: z_route is chosen by the §6.0 tail-leg rate measured from the LAST pickup qₙ
+  // (or self when carrying-only) — not by the whole-route rate from self. Zone choice is
+  // invariant to `weight` (same delivered set across zones), so bestZone's W1 default is safe.
+  const tail = pickups.length > 0 ? pickups[pickups.length - 1]!.pos : self
+  const lPre = routeLength(self, pickups, tail, dist) // self → q1 → … → qₙ (trailing qₙ→qₙ leg = 0)
+  if (!Number.isFinite(lPre)) return null
+  const zp = bestZone(delivered, tail, zones, tnow, dc, dist, params.alpha)
+  if (zp === null) return null
+  // U_route still uses the honest whole-route length (§9.2 eq. for U_route): prefix + tail leg.
+  const L = lPre + zp.L
+  const u = rate(vValue(delivered, zp.zone, L, tnow, dc, M1, G1, weight), L, params.alpha)
+  return { route: { pickups, zone: zp.zone, delivered, L }, u }
 }
 
 function bestInsert(self: Pos, carried: ParcelBelief[], pickups: ParcelBelief[], p: ParcelBelief, zones: Pos[], tnow: number, dc: DecayConsts, params: Params, dist: Dist, weight: ParcelWeight): { route: Route; u: number } | null {

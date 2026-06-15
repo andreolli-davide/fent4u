@@ -39,6 +39,15 @@ test('one-way edge is directed', () => {
   expect(d(grid, emptyCtx, { x: 2, y: 0 }, { x: 0, y: 0 })).toBe(Infinity)
 })
 
+// GAME_RULES §Directional: a one-way tile blocks entry only AGAINST its arrow.
+// A '>' tile must still admit perpendicular entry (from above/below). Regression
+// for the inverted check that allowed only entry in the arrow's exact direction.
+test('one-way admits perpendicular entry, blocks only the opposite', () => {
+  const grid = buildGrid(parse(['#>#', '...']))
+  // (0,1) -> (1,1) -> (1,0): the only route reaches the '>' tile by moving across it.
+  expect(d(grid, emptyCtx, { x: 0, y: 1 }, { x: 1, y: 0 })).toBe(2)
+})
+
 test('first step points toward the goal', () => {
   const grid = buildGrid(parse(['...']))
   const r = planPath(grid, emptyCtx, { x: 0, y: 0 }, { x: 2, y: 0 })
