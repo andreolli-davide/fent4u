@@ -29,6 +29,7 @@ export class BdiLoop {
   private acting = false
   private lastRebalanceTick = -Infinity
   private prevOwnClaims = 0 // own-claim count last tick — for the route-finished falling edge (§9.6)
+  private prevSelf: Pos | null = null // self pos folded last tick == value last shipped to partner; the SHARED self pos for coordination (§9.7)
 
   constructor(
     private readonly client: DeliverooClient,
@@ -70,6 +71,12 @@ export class BdiLoop {
       return L
     }
 
+    // §9.7: coordination (auction/rebalance/pool) must read SHARED state only. The only
+    // private leak is our OWN position — partner pos already comes from shared beliefs.
+    // prevSelf is last tick's self = the value last shipped to the partner, so both
+    // replicas auction over the identical (self_{t-1}, partner_{last-seen}) pair.
+    const sharedSelf = this.prevSelf ?? self
+
     // ── coordination (§9.3/§9.6/§9.7) ──
     // 1. liveness: expire own stuck claims (distOf reads live d from this agent)
     const dropped = this.claims.expire(tnow, (c) => {
@@ -92,19 +99,19 @@ export class BdiLoop {
       }
       // build both agent snapshots from shared beliefs
       const carried = beliefs.self.carrying.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
-      const meSnap: AgentSnap = { id: me, pos: self, carried, claimed: this.claimedParcels(beliefs, me) }
+      const meSnap: AgentSnap = { id: me, pos: sharedSelf, carried, claimed: this.claimedParcels(beliefs, me) }
       const partnerSnap: AgentSnap = partner
         ? { id: this.coord.partner, pos: partner.pos, carried: this.carriedOf(beliefs, this.coord.partner), claimed: this.claimedParcels(beliefs, this.coord.partner) }
         : { id: this.coord.partner, pos: self, carried: [], claimed: [] } // degraded: no partner bids
       const enemies = [...beliefs.agents.values()].filter((a) => a.rel === 'enemy')
-      const { pool } = this.buildPool(beliefs, self, tnow, dist)
+      const { pool } = this.buildPool(beliefs, sharedSelf, tnow, dist)
       // 2. auction the unclaimed pool (deterministic; commit only own wins)
       const agents: [AgentSnap, AgentSnap] = me < this.coord.partner ? [meSnap, partnerSnap] : [partnerSnap, meSnap]
       const alloc = runAuction({ pool, agents, enemies, zones: this.grid.deliveryZones, dist, dc: this.dc, params: this.params, tnow, epoch: tnow, budgetMs: this.params.auction_budget_ms })
       for (const [parcelId, winner] of alloc) {
         if (winner !== me) continue
         const p = beliefs.parcels.get(parcelId)! // safe: pool ⊆ beliefs.parcels, parcels not mutated between buildPool and here
-        const claim: Claim = { parcelId, agentId: me, origin: 'AUCTION', epoch: tnow, commitTick: tnow, originD: dist(self, p.pos), lastD: dist(self, p.pos), lastProgressTick: tnow }
+        const claim: Claim = { parcelId, agentId: me, origin: 'AUCTION', epoch: tnow, commitTick: tnow, originD: dist(sharedSelf, p.pos), lastD: dist(sharedSelf, p.pos), lastProgressTick: tnow }
         this.claims.add(claim)
         this.broadcast({ kind: 'claim', claim })
       }
@@ -172,6 +179,7 @@ export class BdiLoop {
     this.committedU = chosenCand.u
 
     await this.act(chosen, beliefs, ctx, tnow)
+    this.prevSelf = self // shipped to partner by blackboard.onTick after this returns ⇒ next tick's shared self
     this.log.debug({ durationMs: performance.now() - t0, tick: tnow }, 'tick')
   }
 
