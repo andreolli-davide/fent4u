@@ -36,6 +36,9 @@ test('coordination defaults are present and sane', () => {
   expect(DEFAULT_PARAMS.rebalance_period).toBe(15)
   expect(DEFAULT_PARAMS.auction_budget_ms).toBe(8)
   expect(DEFAULT_PARAMS.theta_disp).toBeGreaterThan(0)
+  // partner-lost backstop must outlast normal a2a jitter (≫ claim_ttl) so a live partner
+  // is never mistaken for dead and stripped of its claims
+  expect(DEFAULT_PARAMS.partner_lost_ticks).toBeGreaterThan(DEFAULT_PARAMS.claim_ttl)
 })
 
 test('out-of-range coordination key throws', () => {
