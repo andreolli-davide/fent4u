@@ -6,6 +6,28 @@ import type { AgentId } from '../types/a2a.js'
 
 export type ClaimOrigin = 'AUCTION' | 'MISSION' // only AUCTION is created this slice
 
+/** The claims sub-protocol carried in A2AMessage.payload on the `type:'claims'` channel. */
+export type ClaimMsg =
+  | { kind: 'claim'; claim: Claim }
+  | { kind: 'release'; parcelId: string; epoch: number }
+  | { kind: 'swap'; parcelId: string; toAgent: AgentId; epoch: number }
+
+/** Narrowing guard for an inbound claims payload (unknown → ClaimMsg). */
+export function isClaimMsg(p: unknown): p is ClaimMsg {
+  if (typeof p !== 'object' || p === null) return false
+  const m = p as Record<string, unknown>
+  switch (m.kind) {
+    case 'claim':
+      return typeof m.claim === 'object' && m.claim !== null && typeof (m.claim as Claim).parcelId === 'string'
+    case 'release':
+      return typeof m.parcelId === 'string' && typeof m.epoch === 'number'
+    case 'swap':
+      return typeof m.parcelId === 'string' && typeof m.toAgent === 'string' && typeof m.epoch === 'number'
+    default:
+      return false
+  }
+}
+
 export interface Claim {
   parcelId: string
   agentId: AgentId
@@ -64,5 +86,34 @@ export class ClaimStore {
       }
     }
     return dropped
+  }
+
+  /**
+   * Apply an inbound replication message. Conflict rule (§9.3): if an incoming
+   * same-epoch claim contends with a local claim on the same parcel, the lower
+   * agentId keeps it (deterministic, so a double-chase lasts ≤ 1 tick).
+   */
+  applyMsg(msg: ClaimMsg, _self: AgentId): void {
+    switch (msg.kind) {
+      case 'claim': {
+        const incoming = msg.claim
+        const cur = this.byParcel.get(incoming.parcelId)
+        if (cur && cur.epoch === incoming.epoch && cur.agentId !== incoming.agentId) {
+          // same-epoch conflict → lower id wins
+          if (incoming.agentId < cur.agentId) this.byParcel.set(incoming.parcelId, incoming)
+          return
+        }
+        this.byParcel.set(incoming.parcelId, incoming)
+        return
+      }
+      case 'release':
+        this.byParcel.delete(msg.parcelId)
+        return
+      case 'swap': {
+        const cur = this.byParcel.get(msg.parcelId)
+        if (cur) cur.agentId = msg.toAgent
+        return
+      }
+    }
   }
 }
