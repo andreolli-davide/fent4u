@@ -62,3 +62,18 @@ test('chooseExplore returns null when all spawners unreachable', () => {
   const infDist = (_a: Pos, _b: Pos): number => Infinity
   expect(chooseExplore([{ x: 5, y: 5 }], new Map(), { x: 0, y: 0 }, 0, infDist, DEFAULT_PARAMS)).toBeNull()
 })
+
+test('chooseExplore prefers farther spawner when partnerTarget is near the closer one', () => {
+  // Two spawners equidistant from self, but partnerTarget is near spawnerA
+  const self: Pos = { x: 5, y: 0 }
+  const spawnerA: Pos = { x: 0, y: 0 }  // distance 5 from self, distance 0 from partner
+  const spawnerB: Pos = { x: 10, y: 0 } // distance 5 from self, distance 10 from partner
+  const partnerTarget: Pos = { x: 0, y: 0 }
+  const dRef = 10
+  const dist = (a: Pos, b: Pos): number => Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
+  // seenAt empty → both spawners have staleness=tnow, equal base utility
+  const t = chooseExplore([spawnerA, spawnerB], new Map(), self, 10, dist, DEFAULT_PARAMS, partnerTarget, dRef)
+  const exploreIntent = t?.intention as Extract<Intention, { kind: 'explore' }> | undefined
+  // spawnerB is farther from partnerTarget → dispersion bonus → should be chosen
+  expect(exploreIntent?.target.tile).toEqual(spawnerB)
+})

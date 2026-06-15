@@ -2,6 +2,7 @@ import type { Pos } from '../types/perception.js'
 import type { Params } from './params.js'
 import type { Route } from './route.js'
 import { rate, tileKey } from './utility.js'
+import { awayFromPartner } from '../coordination/dispersion.js'
 
 export interface ExploreTarget {
   tile: Pos
@@ -61,8 +62,18 @@ export function select(cands: Candidate[], committed: Intention | null, hCommit:
  * Stalest-frontier exploration target (§5.5 approximation). spawnValue is a uniform
  * a-priori weight of 1 per spawner tile this slice; staleness = tnow - lastSeen
  * (tnow if never seen). Returns the argmax of theta_explore*[spawnValue + kappa*staleness]/(d+1)^alpha.
+ * §9.5: with dispersion enabled, adds θ_disp * awayFromPartner term to break ties toward farther spawners.
  */
-export function chooseExplore(spawners: Pos[], seenAt: Map<string, number>, self: Pos, tnow: number, dist: (a: Pos, b: Pos) => number, params: Params): Candidate | null {
+export function chooseExplore(
+  spawners: Pos[],
+  seenAt: Map<string, number>,
+  self: Pos,
+  tnow: number,
+  dist: (a: Pos, b: Pos) => number,
+  params: Params,
+  partnerTarget: Pos | null = null,
+  dRef: number = 1
+): Candidate | null {
   let best: { target: ExploreTarget; u: number } | null = null
   for (const s of spawners) {
     const dd = dist(self, s)
@@ -70,7 +81,7 @@ export function chooseExplore(spawners: Pos[], seenAt: Map<string, number>, self
     const lastSeen = seenAt.get(tileKey(s))
     const staleness = lastSeen === undefined ? tnow : tnow - lastSeen
     const value = params.theta_explore * (1 + params.kappa_info * staleness)
-    const u = rate(value, dd, params.alpha)
+    const u = rate(value, dd, params.alpha) + params.theta_disp * awayFromPartner(s, partnerTarget, dRef, dist)
     if (best === null || u > best.u) best = { target: { tile: s, staleness }, u }
   }
   return best === null ? null : { intention: { kind: 'explore', target: best.target }, u: best.u }
