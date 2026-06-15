@@ -1,7 +1,7 @@
 // src/bdi/loop.ts
 import type { DeliverooClient } from '../external/deliveroo.js'
 import type { PerceptionSnapshot, Pos, Tile } from '../types/perception.js'
-import { BeliefBase, type ParcelBelief } from '../blackboard/beliefs.js'
+import { BeliefBase, type ParcelBelief, type AgentBelief } from '../blackboard/beliefs.js'
 import { buildGrid, buildObstacles, planPath, isPushAdmissible, type Grid, type PlanCtx, type Dir } from '../planning/astar.js'
 import { decayConsts, pAvail, deliverBundle, tileKey, type DecayConsts, type EnemyThreat } from './utility.js'
 import { buildRoute, uRoute, routeFromClaims } from './route.js'
@@ -43,8 +43,14 @@ export class BdiLoop {
     this.spawners = client.map.filter((t: Tile) => t.type === 'spawner').map((t) => t.pos)
   }
 
-  /** Drive one perception tick → at most one action. Skips if an action is in flight. */
-  async tick(snap: PerceptionSnapshot): Promise<void> {
+  /**
+   * Drive one perception tick → at most one action. Skips if an action is in flight.
+   * `partnerAlive` is the CHANNEL-liveness signal (heartbeat-backed; Blackboard.partnerAlive).
+   * It is the authority for §9.7/§11 degradation — see the partner block below for why the
+   * partner's agent-belief `lastSeen` must NOT be used for this. Defaults to alive so solo
+   * callers/tests (no Blackboard) degrade purely on partner-belief absence.
+   */
+  async tick(snap: PerceptionSnapshot, partnerAlive = true): Promise<void> {
     if (this.acting) {
       this.log.debug({ tick: snap.tick }, 'tick skipped — action in flight')
       return
@@ -87,21 +93,29 @@ export class BdiLoop {
 
     if (this.coord) {
       const me = this.client.role
-      const partner = beliefs.agents.get(this.coord.partner) ?? null
-      // §9.7/§11 degradation: partner.lastSeen tracks the last tick its state arrived over
-      // a2a (the blackboard ships self every tick), so it doubles as a channel heartbeat. If
-      // it has gone silent past PARTNER_LOST_TICKS, drop its soft claims locally so we reclaim
-      // its parcels and degrade to solo play (region ownership). MISSION locks survive.
-      const partnerAge = partner ? tnow - partner.lastSeen : Infinity
-      if (partnerAge >= this.params.partner_lost_ticks) {
+      // §9.7: resolve the partner by belief `rel`, NOT by `coord.partner`. The agents map is
+      // keyed by SERVER agent id (UUID, from perception / self-broadcast); `coord.partner` is the
+      // ROLE label ('liaison'|'courier'). A role-keyed get() always misses → partner wrongly null →
+      // degraded-solo flap. There is exactly one teammate (2-agent team), so rel==='partner' is unique.
+      const partner = this.partnerBelief(beliefs)
+      // §9.7/§11 degradation keys off CHANNEL liveness (partnerAlive, heartbeat-backed), NOT
+      // the partner's agent-belief lastSeen. The belief only advances on self-bearing deltas —
+      // ticks where the partner FOLDS perception — so it freezes while the partner executes a
+      // (multi-tick interpolated) action, during which it heartbeats instead of delta-ing. Keyed
+      // off the belief, the loop would declare the partner lost every partner_lost_ticks and
+      // flap (reclaim → action completes → recover → repeat). Degraded ⇔ channel dead OR partner
+      // never seen. On degrade, drop its soft AUCTION claims so we reclaim its parcels and play
+      // solo (region ownership). MISSION locks survive.
+      const partnerLive = partnerAlive && partner !== null
+      if (!partnerLive) {
         const reclaimed = this.claims.dropForeignAuctionClaims(me)
         if (reclaimed.length > 0) this.log.info({ tick: tnow, count: reclaimed.length, partner: this.coord.partner }, 'partner lost — reclaimed soft claims')
       }
       // build both agent snapshots from shared beliefs
       const carried = beliefs.self.carrying.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
       const meSnap: AgentSnap = { id: me, pos: sharedSelf, carried, claimed: this.claimedParcels(beliefs, me) }
-      const partnerSnap: AgentSnap = partner
-        ? { id: this.coord.partner, pos: partner.pos, carried: this.carriedOf(beliefs, this.coord.partner), claimed: this.claimedParcels(beliefs, this.coord.partner) }
+      const partnerSnap: AgentSnap = partnerLive && partner
+        ? { id: this.coord.partner, pos: partner.pos, carried: this.carriedOf(beliefs), claimed: this.claimedParcels(beliefs, this.coord.partner) }
         : { id: this.coord.partner, pos: self, carried: [], claimed: [] } // degraded: no partner bids
       const enemies = [...beliefs.agents.values()].filter((a) => a.rel === 'enemy')
       const { pool } = this.buildPool(beliefs, sharedSelf, tnow, dist)
@@ -116,11 +130,11 @@ export class BdiLoop {
       // (sharedSelf for me, partnerSnap.pos for the partner) — both are shared state, so
       // the claim is identical on both replicas.
       for (const [parcelId, winner] of alloc) {
-        // Degraded mode (partner lost → partnerSnap is a phantom at our own pos): do NOT
+        // Degraded mode (partner not live → partnerSnap is a phantom at our own pos): do NOT
         // materialize the phantom's wins as claims — that would exclude those parcels from
         // our own pool and strand them. Solo survivor keeps own wins only (pre-Lever-B
         // behaviour). When the partner is live, commit the FULL allocation (Lever B).
-        if (winner !== me && partner === null) continue
+        if (winner !== me && !partnerLive) continue
         const p = beliefs.parcels.get(parcelId)! // safe: pool ⊆ beliefs.parcels, parcels not mutated between buildPool and here
         const winnerPos = winner === me ? sharedSelf : partnerSnap.pos
         const d = dist(winnerPos, p.pos)
@@ -171,10 +185,10 @@ export class BdiLoop {
     if (route !== null) cands.push({ intention: { kind: 'route', route }, u: uRoute(route, tnow, this.dc, this.params, weightOf) })
     let partnerTarget: Pos | null = null
     if (this.coord) {
-      const partner = beliefs.agents.get(this.coord.partner) ?? null
+      const partner = this.partnerBelief(beliefs)
       const pClaims = this.claimedParcels(beliefs, this.coord.partner)
       const pRoute = (partner !== null && pClaims.length > 0)
-        ? routeFromClaims(this.carriedOf(beliefs, this.coord.partner), pClaims, partner.pos, this.grid.deliveryZones, tnow, this.dc, this.params, dist)
+        ? routeFromClaims(this.carriedOf(beliefs), pClaims, partner.pos, this.grid.deliveryZones, tnow, this.dc, this.params, dist)
         : null
       partnerTarget = pRoute?.pickups[0]?.pos ?? partner?.pos ?? null
     }
@@ -340,9 +354,20 @@ export class BdiLoop {
       .filter((p): p is ParcelBelief => p !== undefined && p.carriedBy === null)
   }
 
-  private carriedOf(beliefs: BeliefBase, who: AgentId): ParcelBelief[] {
-    const ag = beliefs.agents.get(who)
+  /** Parcels the partner is carrying (per its self-broadcast). Partner resolved by rel, not role. */
+  private carriedOf(beliefs: BeliefBase): ParcelBelief[] {
+    const ag = this.partnerBelief(beliefs)
     const ids = ag?.carrying ?? []
     return ids.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
+  }
+
+  /**
+   * The teammate's belief, resolved by `rel === 'partner'`. The agents map is keyed by SERVER
+   * agent id (UUID), so `agents.get(coord.partner)` (a role label) never hits — see §9.7. A
+   * 2-agent team has exactly one partner, so the first rel==='partner' match is authoritative.
+   */
+  private partnerBelief(beliefs: BeliefBase): AgentBelief | null {
+    for (const a of beliefs.agents.values()) if (a.rel === 'partner') return a
+    return null
   }
 }
