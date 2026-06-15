@@ -1,6 +1,6 @@
 import { test, expect } from 'bun:test'
 import { buildRoute, uRoute } from '../src/bdi/route.js'
-import { decayConsts } from '../src/bdi/utility.js'
+import { decayConsts, pAvail, rnow, type EnemyThreat } from '../src/bdi/utility.js'
 import { DEFAULT_PARAMS } from '../src/bdi/params.js'
 import type { GameConsts, Pos } from '../src/types/perception.js'
 import type { ParcelBelief } from '../src/blackboard/beliefs.js'
@@ -40,4 +40,31 @@ test('emergent horizon stops adding when it no longer raises U_route', () => {
 test('uRoute is positive for a valuable reachable route', () => {
   const r = buildRoute([parcel('held', 0, 0)], [], { x: 1, y: 0 }, zones, 0, dc, DEFAULT_PARAMS, manhattan)!
   expect(uRoute(r, 0, dc, DEFAULT_PARAMS)).toBeGreaterThan(0)
+})
+
+// ── P_avail weighting (DESIGN §5.5 / §9.2) ──────────────────────────────────
+// §9.2: "U_collect(p) is exactly U_route of a length-1 route." That identity
+// requires U_route to carry the P_avail factor — value = P_avail · V, not full V.
+// The pool is P_avail>0 filtered upstream, but the magnitude must weight value.
+
+test('uRoute of a length-1 route equals P_avail(p)·V({p})/(L+1)^α (the §9.2 identity)', () => {
+  const risky = parcel('r', 5, 0, 10)
+  const self: Pos = { x: 3, y: 0 }
+  const dSelfP = manhattan(self, risky.pos) // 2
+  const threats: EnemyThreat[] = [{ age: 0, dToP: 1 }] // an enemy hugging the parcel
+  const pa = pAvail(risky, dSelfP, threats, DEFAULT_PARAMS.beta_comp, 0, dc)
+  const L = dSelfP + manhattan(risky.pos, zones[0]!) // 2 + 5 = 7
+  const expected = (pa * Math.max(0, rnow(risky, 0, dc) - dc.rho * L)) / Math.pow(L + 1, DEFAULT_PARAMS.alpha)
+
+  const weightOf = (q: ParcelBelief): number => (q.id === 'r' ? pa : 1)
+  const r = buildRoute([], [risky], self, zones, 0, dc, DEFAULT_PARAMS, manhattan, weightOf)!
+  expect(r.L).toBe(L)
+  expect(uRoute(r, 0, dc, DEFAULT_PARAMS, weightOf)).toBeCloseTo(expected, 10)
+})
+
+test('a contested route is worth strictly less than the same route at full value', () => {
+  // identical route; the only difference is the P_avail weight on the pickup.
+  const r = buildRoute([], [parcel('r', 5, 0, 10)], { x: 3, y: 0 }, zones, 0, dc, DEFAULT_PARAMS, manhattan)!
+  const contested = (q: ParcelBelief): number => (q.id === 'r' ? 0.3 : 1)
+  expect(uRoute(r, 0, dc, DEFAULT_PARAMS, contested)).toBeLessThan(uRoute(r, 0, dc, DEFAULT_PARAMS))
 })

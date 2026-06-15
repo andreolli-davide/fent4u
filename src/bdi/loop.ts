@@ -53,10 +53,12 @@ export class BdiLoop {
 
     // candidates
     const carried = beliefs.self.carrying.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
-    const pool = this.buildPool(beliefs, self, tnow, dist)
-    const route = buildRoute(carried, pool, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist)
+    const { pool, weight } = this.buildPool(beliefs, self, tnow, dist)
+    // Pickups weight their P_avail (survival × race); carried parcels are in hand ⇒ 1 (§5.5).
+    const weightOf = (p: ParcelBelief): number => weight.get(p.id) ?? 1
+    const route = buildRoute(carried, pool, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf)
     const cands: Candidate[] = []
-    if (route !== null) cands.push({ intention: { kind: 'route', route }, u: uRoute(route, tnow, this.dc, this.params) })
+    if (route !== null) cands.push({ intention: { kind: 'route', route }, u: uRoute(route, tnow, this.dc, this.params, weightOf) })
     const ex = chooseExplore(this.spawners, this.seenAt, self, tnow, dist, this.params)
     if (ex !== null) cands.push(ex)
     cands.push({ intention: { kind: 'idle' }, u: this.params.eps_idle })
@@ -89,17 +91,20 @@ export class BdiLoop {
     return { obstacles, protectedTiles, budgetMs: this.params.push_plan_budget_ms }
   }
 
-  private buildPool(beliefs: BeliefBase, self: Pos, tnow: number, dist: (a: Pos, b: Pos) => number): ParcelBelief[] {
+  /** Pickable parcels with P_avail>0, plus the per-parcel P_avail used to weight route value (§5.5). */
+  private buildPool(beliefs: BeliefBase, self: Pos, tnow: number, dist: (a: Pos, b: Pos) => number): { pool: ParcelBelief[]; weight: Map<string, number> } {
     const enemies = [...beliefs.agents.values()].filter((a) => a.rel === 'enemy')
-    const out: ParcelBelief[] = []
+    const pool: ParcelBelief[] = []
+    const weight = new Map<string, number>()
     for (const p of beliefs.parcels.values()) {
       if (p.carriedBy !== null) continue
       const dSelfP = dist(self, p.pos)
       if (!Number.isFinite(dSelfP)) continue
       const threats: EnemyThreat[] = enemies.map((e) => ({ age: tnow - e.lastSeen, dToP: dist(e.pos, p.pos) }))
-      if (pAvail(p, dSelfP, threats, this.params.beta_comp, tnow, this.dc) > 0) out.push(p)
+      const pa = pAvail(p, dSelfP, threats, this.params.beta_comp, tnow, this.dc)
+      if (pa > 0) { pool.push(p); weight.set(p.id, pa) }
     }
-    return out
+    return { pool, weight }
   }
 
   private async act(chosen: Intention, beliefs: BeliefBase, ctx: PlanCtx, tnow: number): Promise<void> {

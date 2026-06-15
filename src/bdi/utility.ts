@@ -73,10 +73,18 @@ export function rate(value: number, L: number, alpha: number): number {
   return value / Math.pow(L + 1, alpha)
 }
 
-/** §5.4 delivery value kernel for a set delivered to zone z after L travel ticks. */
-export function vValue(parcels: ParcelBelief[], z: Pos, L: number, tnow: number, dc: DecayConsts, m: CountShaper = M1, g: ZoneShaper = G1): number {
+/** Per-parcel value weight (§5.5). Default: every parcel certain (in-hand). */
+export type ParcelWeight = (p: ParcelBelief) => number
+export const W1: ParcelWeight = () => 1
+
+/**
+ * §5.4 delivery value kernel for a set delivered to zone z after L travel ticks.
+ * `weight` discounts each parcel's contribution by its survival/race odds (§5.5):
+ * carried parcels weight 1 (in hand), uncollected pickups weight their P_avail.
+ */
+export function vValue(parcels: ParcelBelief[], z: Pos, L: number, tnow: number, dc: DecayConsts, m: CountShaper = M1, g: ZoneShaper = G1, weight: ParcelWeight = W1): number {
   let sum = 0
-  for (const p of parcels) sum += Math.max(0, rnow(p, tnow, dc) - dc.rho * L)
+  for (const p of parcels) sum += weight(p) * Math.max(0, rnow(p, tnow, dc) - dc.rho * L)
   return g(z) * m(parcels.length) * sum
 }
 
