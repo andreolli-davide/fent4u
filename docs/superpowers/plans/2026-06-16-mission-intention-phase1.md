@@ -145,7 +145,7 @@ export class DeliveryRateTracker {
   rhoRef(): number {
     if (this.samples.length === 0) return this.bootstrap
     const sorted = [...this.samples].sort((a, b) => a - b)
-    const idx = Math.min(sorted.length - 1, Math.ceil(0.9 * sorted.length) - 1)
+    const idx = Math.min(sorted.length - 1, Math.floor(0.9 * sorted.length))
     return sorted[Math.max(0, idx)]!
   }
 }
