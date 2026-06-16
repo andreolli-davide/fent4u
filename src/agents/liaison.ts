@@ -36,7 +36,10 @@ async function boot(config: Config, params: Params): Promise<void> {
   claims = new ClaimStore()
 
   const missionView = new TeamMissionView()
-  const missionSlot = new MissionSlot((m) => missionView.set(m))
+  const missionSlot = new MissionSlot((m) => {
+    missionView.set(m)
+    send({ from: 'liaison', to: 'courier', type: 'mission', payload: m })
+  })
   const chat = makeChat(config)
   const intake = createIntake({
     slot: missionSlot,

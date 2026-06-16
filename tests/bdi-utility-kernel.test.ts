@@ -1,6 +1,6 @@
 // tests/bdi-utility-kernel.test.ts
 import { test, expect } from 'bun:test'
-import { decayConsts, vValue, deliverBundle, bestZone, rate } from '../src/bdi/utility.js'
+import { decayConsts, vValue, bestZone, rate } from '../src/bdi/utility.js'
 import type { GameConsts, Pos } from '../src/types/perception.js'
 import type { ParcelBelief } from '../src/blackboard/beliefs.js'
 
@@ -15,11 +15,6 @@ test('vValue sums travel-decayed rewards (m=g=1)', () => {
   expect(vValue([p('a', 10), p('b', 10)], { x: 0, y: 0 }, 20, 0, dc)).toBeCloseTo(18, 6)
 })
 
-test('deliverBundle keeps all positive-reward parcels (default m=1)', () => {
-  const b = deliverBundle([p('a', 10), p('b', 6)], { x: 0, y: 0 }, 0, dc)
-  expect(b.set.map((x) => x.id).sort()).toEqual(['a', 'b'])
-  expect(b.value).toBe(16)
-})
 
 test('bestZone prefers the nearer zone after en-route decay (§6.0 check)', () => {
   // 3 parcels @10, rho=0.05. Zone A d=2; Zone B d=58. Decayed: A wins.

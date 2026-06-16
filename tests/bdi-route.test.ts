@@ -1,6 +1,7 @@
 import { test, expect } from 'bun:test'
 import { buildRoute, uRoute, routeFromClaims } from '../src/bdi/route.js'
-import { decayConsts, pAvail, rnow, type EnemyThreat } from '../src/bdi/utility.js'
+import { decayConsts, pAvail, rnow, M1, type EnemyThreat } from '../src/bdi/utility.js'
+import { buildZoneShaper } from '../src/mission/shapers.js'
 import { DEFAULT_PARAMS } from '../src/bdi/params.js'
 import type { GameConsts, Pos } from '../src/types/perception.js'
 import type { ParcelBelief } from '../src/blackboard/beliefs.js'
@@ -80,4 +81,14 @@ test('routeFromClaims includes every claimed parcel (never drops a low-value one
 
 test('routeFromClaims of an empty commitment is null', () => {
   expect(routeFromClaims([], [], { x: 1, y: 0 }, zones, 0, dc, DEFAULT_PARAMS, manhattan)).toBeNull()
+})
+
+test('buildRoute routes to a g=5 zone over a nearer identity zone (§6.0)', () => {
+  // self at (0,0); zone A (x=2, g=1), zone B (x=6, g=5). carry one parcel @10, rho=0.05.
+  const carried = [parcel('a', 0, 0, 10)]
+  const twoZones: Pos[] = [{ x: 2, y: 0 }, { x: 6, y: 0 }]
+  const dist = (a: Pos, b: Pos): number => Math.abs(b.x - a.x) + Math.abs(b.y - a.y)
+  const g = buildZoneShaper([{ tile: { tag: 'TEXT_BOUND', x: 6, y: 0 }, factor: 5 }])
+  const r = buildRoute(carried, [], { x: 0, y: 0 }, twoZones, 0, dc, DEFAULT_PARAMS, dist, undefined, M1, g)
+  expect(r?.zone).toEqual({ x: 6, y: 0 })
 })
