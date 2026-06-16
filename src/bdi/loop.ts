@@ -253,6 +253,8 @@ export class BdiLoop {
 
     if (chosen.kind === 'explore') {
       goal = chosen.target.tile
+    } else if (chosen.kind === 'mission') {
+      return // mission execution not yet implemented this slice
     } else {
       const route = chosen.route
       if (route.pickups.length > 0) {
