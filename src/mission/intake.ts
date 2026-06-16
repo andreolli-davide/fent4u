@@ -42,11 +42,13 @@ export function createIntake(deps: IntakeDeps): Intake {
         continue
       }
       if (res.kind === 'query') {
-        void say(from, res.answer)
+        void say(from, res.answer).catch((err: unknown) =>
+          logger.warn({ module: 'mission', err: String(err) }, 'say failed for query reply')
+        )
       } else if (res.kind === 'mission') {
         lastMission = res
       } else {
-        logger.info({ module: 'mission', reason: res.reason }, 'mission discarded')
+        logger.debug({ module: 'mission', reason: res.reason }, 'mission discarded')
       }
     }
 

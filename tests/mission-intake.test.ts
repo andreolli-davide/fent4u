@@ -79,3 +79,25 @@ test('discards neither answer nor install', async () => {
   expect(said).toEqual([])
   expect(slot.current()).toBeNull()
 })
+
+test('compile error logs warning and continues processing remaining messages', async () => {
+  const slot = new MissionSlot()
+  const said: unknown[] = []
+  let calls = 0
+  const intake = createIntake({
+    slot,
+    compile: async (raw) => {
+      calls++
+      if (raw === 'bad') throw new Error('compile boom')
+      return missionResult('ok')
+    },
+    say: async (_to, msg) => { said.push(msg); return 'successful' },
+    logger: silentLog,
+  })
+  intake.onMessage('srv', 'bad')
+  intake.onMessage('srv', 'good')
+  await intake.flush()
+  expect(calls).toBe(2)             // both messages were attempted
+  expect(slot.current()?.id).toBe('ok') // good message still installed
+  expect(said).toEqual([])           // no queries
+})
