@@ -3,6 +3,10 @@ import { connect } from '../external/deliveroo.js'
 import { Blackboard } from '../blackboard/blackboard.js'
 import { BdiLoop } from '../bdi/loop.js'
 import { ClaimStore, isClaimMsg } from '../coordination/claims.js'
+import { MissionSlot } from '../mission/slot.js'
+import { makeChat } from '../mission/llm.js'
+import { compile } from '../mission/compiler.js'
+import { createIntake } from '../mission/intake.js'
 import type { WorkerEnvelope, A2AMessage } from '../types/a2a.js'
 import type { Config } from '../types/config.js'
 import type { Params } from '../bdi/params.js'
@@ -29,6 +33,20 @@ async function boot(config: Config, params: Params): Promise<void> {
   const client = await connect(config, 'liaison', logger)
 
   claims = new ClaimStore()
+
+  const missionSlot = new MissionSlot()
+  const chat = makeChat(config) // throws fast if LITELLM_MODEL is not an OpenAI-handler id
+  const intake = createIntake({
+    slot: missionSlot,
+    compile: (raw) => compile(raw, chat),
+    say: (toId, msg) => client.say(toId, msg),
+    logger: log,   // log is non-null here — set at top of boot()
+  })
+  client.onMissionMsg((id, _name, msg) => {
+    if (typeof msg === 'string') intake.onMessage(id, msg)
+    else intake.onMessage(id, JSON.stringify(msg))
+  })
+  log.info({}, 'mission lane online')
 
   const loop = new BdiLoop(client, params, {
     info: (obj, msg) => log!.info(obj as object, msg),
