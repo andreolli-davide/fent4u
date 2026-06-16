@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@unitn-asa/deliveroo-js-sdk": "latest",
-    "litellm": "latest",
+    "openai": "^6.43.0",
     "pino": "^9",
     "socket.io-client": "^4.7.2",
     "yaml": "^2.9.0"

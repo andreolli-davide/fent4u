@@ -3,9 +3,9 @@ export interface Config {
   DELIVEROO_PORT: number
   TOKEN_LIAISON: string
   TOKEN_COURIER: string
-  LITELLM_MODEL: string
-  LITELLM_API_KEY: string
-  LITELLM_BASE_URL: string
+  OPENAI_MODEL: string
+  OPENAI_API_KEY: string
+  OPENAI_BASE_URL: string
   LOG_LEVEL: 'debug' | 'info' | 'warn' | 'error'
   LOG_DIR: string
 }
@@ -16,8 +16,8 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     'DELIVEROO_PORT',
     'TOKEN_LIAISON',
     'TOKEN_COURIER',
-    'LITELLM_MODEL',
-    'LITELLM_API_KEY',
+    'OPENAI_MODEL',
+    'OPENAI_API_KEY',
   ] as const
 
   for (const key of required) {
@@ -37,9 +37,9 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     DELIVEROO_PORT: port,
     TOKEN_LIAISON: env.TOKEN_LIAISON!,
     TOKEN_COURIER: env.TOKEN_COURIER!,
-    LITELLM_MODEL: env.LITELLM_MODEL!,
-    LITELLM_API_KEY: env.LITELLM_API_KEY!,
-    LITELLM_BASE_URL: env.LITELLM_BASE_URL ?? '',
+    OPENAI_MODEL: env.OPENAI_MODEL!,
+    OPENAI_API_KEY: env.OPENAI_API_KEY!,
+    OPENAI_BASE_URL: env.OPENAI_BASE_URL ?? '',
     LOG_LEVEL: level as Config['LOG_LEVEL'],
     LOG_DIR: env.LOG_DIR ?? './logs',
   }
