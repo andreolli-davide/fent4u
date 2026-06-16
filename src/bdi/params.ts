@@ -21,6 +21,7 @@ export interface Params {
   p_feasible_min: number     // mission dropped below this feasibility (§5.5/§12)
   rate_window: number        // retained reward/tick samples in DeliveryRateTracker
   rate_bootstrap: number     // delivery rate used before any sample exists
+  expiry_floor_ticks: number // §6.2: force-deliver a carried parcel decaying to 0 within this many ticks
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -42,6 +43,7 @@ export const DEFAULT_PARAMS: Params = {
   p_feasible_min: 0.3,
   rate_window: 20,
   rate_bootstrap: 0.5,
+  expiry_floor_ticks: 3,
 }
 
 type Range = [min: number, max: number]
@@ -64,6 +66,7 @@ const RANGES: Record<keyof Params, Range> = {
   p_feasible_min: [0, 1],
   rate_window: [1, 1000],
   rate_bootstrap: [0, 100],
+  expiry_floor_ticks: [0, 100],
 }
 
 export function loadParams(path = 'config/params.yaml'): Params {
