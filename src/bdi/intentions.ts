@@ -1,6 +1,7 @@
 import type { Pos } from '../types/perception.js'
 import type { Params } from './params.js'
 import type { Route } from './route.js'
+import type { Mission } from '../mission/kinds.js'
 import { rate, tileKey } from './utility.js'
 import { awayFromPartner } from '../coordination/dispersion.js'
 
@@ -13,6 +14,7 @@ export interface ExploreTarget {
 export type Intention =
   | { kind: 'route'; route: Route }
   | { kind: 'explore'; target: ExploreTarget }
+  | { kind: 'mission'; mission: Mission }
   | { kind: 'idle' }
 
 export interface Candidate {
@@ -34,11 +36,14 @@ export function matches(committed: Intention | null, cand: Intention): boolean {
   if (committed.kind === 'explore' && cand.kind === 'explore') {
     return tileKey(committed.target.tile) === tileKey(cand.target.tile)
   }
+  if (committed.kind === 'mission' && cand.kind === 'mission') {
+    return committed.mission.id === cand.mission.id
+  }
   return false
 }
 
 /**
- * §9.9 four-candidate argmax (three this slice) with commitment hysteresis.
+ * §9.9 four-candidate argmax with commitment hysteresis.
  *
  * CALLER CONTRACT: always include `{ intention: idle, u: params.eps_idle }` in
  * `cands`. `select` hard-codes a fallback `idle` intention for safety, but relies

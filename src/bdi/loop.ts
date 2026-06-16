@@ -11,6 +11,9 @@ import { ClaimStore, type ClaimMsg, type Claim } from '../coordination/claims.js
 import { runAuction, type AgentSnap } from '../coordination/auction.js'
 import { runRebalance, type RebalanceAgent } from '../coordination/rebalance.js'
 import type { A2AMessage, AgentId } from '../types/a2a.js'
+import { uMission } from './mission-intention.js'
+import { DeliveryRateTracker } from './rate-tracker.js'
+import type { TeamMissionView } from '../mission/view.js'
 
 type LogFn = {
   info: (obj: Record<string, unknown>, msg?: string) => void
@@ -22,6 +25,7 @@ export class BdiLoop {
   private readonly grid: Grid
   private readonly dc: DecayConsts
   private readonly spawners: Pos[]
+  private readonly rateTracker: DeliveryRateTracker
   private readonly seenAt = new Map<string, number>()
   private beliefs: BeliefBase | null = null
   private committed: Intention | null = null
@@ -37,10 +41,12 @@ export class BdiLoop {
     private readonly log: LogFn,
     private readonly claims: ClaimStore = new ClaimStore(),
     private readonly coord?: { partner: AgentId; send: (msg: A2AMessage) => void },
+    private readonly mission?: { view: TeamMissionView; pursue: boolean; onSatisfied?: () => void },
   ) {
     this.grid = buildGrid(client.map)
     this.dc = decayConsts(client.consts)
     this.spawners = client.map.filter((t: Tile) => t.type === 'spawner').map((t) => t.pos)
+    this.rateTracker = new DeliveryRateTracker(params.rate_window, params.rate_bootstrap)
   }
 
   /**
@@ -195,6 +201,13 @@ export class BdiLoop {
     const dRef = this.grid.w + this.grid.h
     const ex = chooseExplore(this.spawners, this.seenAt, self, tnow, dist, this.params, partnerTarget, dRef)
     if (ex !== null) cands.push(ex)
+    if (this.mission?.pursue) {
+      const m = this.mission.view.current()
+      if (m !== null) {
+        const mc = uMission(m, self, dist, tnow, this.rateTracker.rhoRef(), this.params)
+        if (mc !== null) cands.push(mc)
+      }
+    }
     cands.push({ intention: { kind: 'idle' }, u: this.params.eps_idle })
 
     const chosenCand = select(cands, this.committed, this.params.h_commit)
@@ -253,6 +266,17 @@ export class BdiLoop {
 
     if (chosen.kind === 'explore') {
       goal = chosen.target.tile
+    } else if (chosen.kind === 'mission') {
+      const t = chosen.mission.params.targetTile
+      // uMission only emits a candidate for a TEXT_BOUND target, so this is safe.
+      if (t === undefined || t.tag !== 'TEXT_BOUND') return
+      const target: Pos = { x: t.x, y: t.y }
+      if (self.x === target.x && self.y === target.y) {
+        this.mission?.onSatisfied?.()
+        return
+      }
+      await this.stepToward(beliefs, ctx, self, target)
+      return
     } else {
       const route = chosen.route
       if (route.pickups.length > 0) {
@@ -322,6 +346,7 @@ export class BdiLoop {
     try {
       await this.client.putdown(ids)
       beliefs.applyDelivery(ids)
+      this.rateTracker.record(bundle.value, tnow)
     } finally {
       this.acting = false
     }

@@ -8,10 +8,15 @@ export class MissionSlot {
   private slot: Mission | null = null
   private gen = 0
 
+  // onChange fires after every slot mutation with the new current() value — the seam the Liaison
+  // uses to mirror the slot into its TeamMissionView (and, Phase 2, broadcast to the Courier).
+  constructor(private readonly onChange?: (m: Mission | null) => void) {}
+
   install(m: Mission): void {
     if (this.slot) this.teardown(this.slot)
     this.slot = m
     this.gen++
+    this.onChange?.(this.slot)
   }
 
   current(): Mission | null { return this.slot }
@@ -22,6 +27,7 @@ export class MissionSlot {
       this.teardown(this.slot)
       this.slot = null
       this.gen++
+      this.onChange?.(this.slot)
     }
   }
 

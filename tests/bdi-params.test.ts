@@ -45,3 +45,15 @@ test('out-of-range coordination key throws', () => {
   // a 0-tick CLAIM_TTL would expire every claim instantly — reject it
   expect(() => loadParams('tests/fixtures/params-bad-ttl.yaml')).toThrow()
 })
+
+test('mission defaults are present and sane', () => {
+  expect(DEFAULT_PARAMS.theta_mission).toBeGreaterThan(0)
+  expect(DEFAULT_PARAMS.c).toBe(1.5)            // §5.5 rate-ceiling factor
+  expect(DEFAULT_PARAMS.p_feasible_min).toBe(0.3) // §12 floor
+  expect(DEFAULT_PARAMS.rate_window).toBeGreaterThan(0)
+  expect(DEFAULT_PARAMS.rate_bootstrap).toBeGreaterThan(0)
+})
+
+test('out-of-range mission param throws', () => {
+  expect(() => loadParams(tmpFile('p_feasible_min: 2.0\n'))).toThrow(/p_feasible_min/)
+})
