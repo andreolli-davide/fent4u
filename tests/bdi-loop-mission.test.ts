@@ -15,15 +15,15 @@ function rowMap(): Tile[] {
   return tiles
 }
 
-interface Recorder { moves: string[]; client: DeliverooClient }
+interface Recorder { moves: string[]; putdowns: string[][]; client: DeliverooClient }
 function fakeClient(map: Tile[], role: 'liaison' | 'courier'): Recorder {
-  const rec: Recorder = { moves: [], client: null as never }
+  const rec: Recorder = { moves: [], putdowns: [], client: null as never }
   rec.client = {
     role, consts: CONSTS, map, tick: () => 0,
     onPerception: () => {}, onConnect: () => {}, onDisconnect: () => {},
     move: async (dir) => { rec.moves.push(dir); return { x: 0, y: 0 } as Pos },
     pickup: async (): Promise<PickResult[]> => [],
-    putdown: async (ids?: string[]): Promise<PickResult[]> => (ids ?? []).map((id) => ({ id })),
+    putdown: async (ids?: string[]): Promise<PickResult[]> => { rec.putdowns.push(ids ?? []); return (ids ?? []).map((id) => ({ id })) },
     onMissionMsg: () => {}, say: async () => 'successful', ask: async () => ({}), shout: async () => ({}), close: () => {},
   }
   return rec
@@ -69,4 +69,41 @@ test('a pursue:false loop (Courier) never chases the coordinate target', async (
   const loop = new BdiLoop(rec.client, DEFAULT_PARAMS, log, undefined, undefined, { view, pursue: false })
   await loop.tick(snap())
   expect(rec.moves.length).toBe(0) // no mission candidate → idle
+})
+
+const shaperMission = () => assembleMission(
+  { kind: 'REWARD_SHAPER', payoff: 0, abstractIntent: 'stacks of 3 double', params: { m: { '3': 2 } } },
+  'raw', 'm-shaper',
+)
+
+// self ON the delivery tile (0,0) carrying 4 parcels. m(3)=2 ⇒ top-3 bundle (×2) beats all-4 (×1).
+const carrySnap = (): PerceptionSnapshot => ({
+  tick: 1, self: { id: 'me', name: 'me', teamId: 'A', pos: { x: 0, y: 0 }, score: 0 },
+  parcels: [
+    { id: 'a', pos: { x: 0, y: 0 }, reward: 10, carriedBy: 'me' },
+    { id: 'b', pos: { x: 0, y: 0 }, reward: 9, carriedBy: 'me' },
+    { id: 'c', pos: { x: 0, y: 0 }, reward: 8, carriedBy: 'me' },
+    { id: 'd', pos: { x: 0, y: 0 }, reward: 1, carriedBy: 'me' },
+  ],
+  agents: [], crates: [],
+})
+
+// Phase-2 "Done when … on BOTH agents": the Courier reads shapers despite pursue:false.
+test('Courier (pursue:false) honours a REWARD_SHAPER: delivers the shaped subset (drop-3-hold-1)', async () => {
+  const rec = fakeClient(rowMap(), 'courier')
+  const view = new TeamMissionView()
+  view.set(shaperMission())
+  const loop = new BdiLoop(rec.client, DEFAULT_PARAMS, log, undefined, undefined, { view, pursue: false })
+  await loop.tick(carrySnap())
+  expect(rec.putdowns).toHaveLength(1)
+  expect(rec.putdowns[0]!.slice().sort()).toEqual(['a', 'b', 'c']) // 'd' held: m(3)=2·27 > m(4)=1·28
+})
+
+// Control: with NO mission the same Courier delivers all four (base play, m≡1).
+test('no mission: the same delivery ships all positive-Rnow parcels (base play)', async () => {
+  const rec = fakeClient(rowMap(), 'courier')
+  const loop = new BdiLoop(rec.client, DEFAULT_PARAMS, log)
+  await loop.tick(carrySnap())
+  expect(rec.putdowns).toHaveLength(1)
+  expect(rec.putdowns[0]!.slice().sort()).toEqual(['a', 'b', 'c', 'd'])
 })

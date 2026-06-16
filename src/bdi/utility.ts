@@ -88,7 +88,6 @@ export function vValue(parcels: ParcelBelief[], z: Pos, L: number, tnow: number,
   return g(z) * m(parcels.length) * sum
 }
 
-
 export interface ZonePick { zone: Pos; L: number; rate: number }
 
 /**
