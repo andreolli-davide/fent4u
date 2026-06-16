@@ -68,6 +68,16 @@ export function isMissionDraft(u: unknown): u is MissionDraft {
   return true
 }
 
+export function isMission(u: unknown): u is Mission {
+  if (!isMissionDraft(u)) return false
+  const d = u as unknown as Record<string, unknown>
+  return (
+    typeof d.id === 'string' &&
+    typeof d.rawText === 'string' &&
+    (d.status === 'CLASSIFIED' || d.status === 'SUPERSEDED')
+  )
+}
+
 export function assembleMission(draft: MissionDraft, rawText: string, id: string): Mission {
   return { ...draft, id, rawText, status: 'CLASSIFIED' }
 }
