@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>fent4u — Remaining Implementation (handoff)</title>
+<style>
+  :root { --ink:#1a1a1a; --muted:#5a5a5a; --line:#d8d8d8; --accent:#3b3ba8;
+          --done:#1e7d32; --partial:#b8860b; --missing:#c0392b; --code:#f4f4f6; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-family: "Segoe UI", Arial, sans-serif; color: var(--ink);
+         line-height: 1.45; font-size: 11pt; margin: 0; }
+  h1 { font-size: 22pt; margin: 0 0 2pt; }
+  h2 { font-size: 14pt; margin: 22pt 0 6pt; padding-bottom: 3pt;
+       border-bottom: 2px solid var(--accent); color: var(--accent); }
+  h3 { font-size: 12pt; margin: 14pt 0 4pt; }
+  p { margin: 4pt 0; }
+  code { background: var(--code); padding: 1px 4px; border-radius: 3px;
+         font-family: "Consolas", monospace; font-size: 9.5pt; }
+  .sub { color: var(--muted); font-size: 10pt; margin-top: 2pt; }
+  .legend span { display:inline-block; margin-right: 14pt; font-size: 9.5pt; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align: baseline;}
+  .d-done{background:var(--done)} .d-part{background:var(--partial)} .d-miss{background:var(--missing)}
+  .badge { font-size: 8pt; font-weight: 700; padding: 1px 6px; border-radius: 9px;
+           color:#fff; vertical-align: middle; letter-spacing:.3px;}
+  .b-done{background:var(--done)} .b-part{background:var(--partial)} .b-miss{background:var(--missing)}
+  .card { border:1px solid var(--line); border-radius:7px; padding:10pt 12pt;
+          margin:9pt 0; break-inside: avoid; }
+  .card h3 { margin-top:0; }
+  .meta { font-size:9pt; color:var(--muted); margin:2pt 0 6pt; }
+  ul { margin:4pt 0 4pt 0; padding-left:18pt; }
+  li { margin:2pt 0; }
+  .chk { list-style:none; padding-left:2pt; }
+  .chk li:before { content:"\2610"; margin-right:6pt; }
+  table { border-collapse: collapse; width:100%; font-size:10pt; margin:6pt 0; }
+  th,td { border:1px solid var(--line); padding:4pt 7pt; text-align:left; vertical-align:top; }
+  th { background:#f0f0f4; }
+  .note { background:#fbf7e8; border-left:3px solid var(--partial); padding:7pt 10pt; font-size:10pt; margin:8pt 0; }
+  .crit { background:#fdecea; border-left:3px solid var(--missing); padding:7pt 10pt; font-size:10pt; margin:8pt 0; }
+  header { border-bottom:3px solid var(--ink); padding-bottom:8pt; margin-bottom:6pt; }
+  @page { size: A4; margin: 16mm 15mm; }
+  .pb { break-before: page; }
+</style>
+</head>
+<body>
+<header>
+  <h1>fent4u — Remaining Implementation</h1>
+  <p class="sub">Implementation handoff &middot; generated 2026-06-16 &middot; source of truth: <code>DESIGN.md</code> (v1.10, 18 sections) vs. current <code>src/</code> (~2,736 LOC, 32 test files)</p>
+</header>
+
+<p><strong>Headline.</strong> The normal-play <strong>BDI + multi-agent coordination core is built and well-tested.</strong>
+What remains is essentially the whole <strong>special-missions / LLM half</strong> of the project — the feature that
+distinguishes the Liaison from the Courier. Today <code>src/agents/liaison.ts</code> is a near-clone of
+<code>src/agents/courier.ts</code>: it boots a pure BDI loop and never touches missions, contracts, or the LLM.</p>
+
+<p class="legend">
+  <span><span class="dot d-done"></span>Done</span>
+  <span><span class="dot d-part"></span>Partial / stubbed</span>
+  <span><span class="dot d-miss"></span>Missing entirely</span>
+</p>
+
+<h2>Already implemented — do not rebuild</h2>
+<table>
+  <tr><th>Area</th><th>DESIGN</th><th>Where</th></tr>
+  <tr><td>Two-worker process model, relay, blackboard replication + delta-sync</td><td>§2</td><td><code>blackboard/</code>, <code>relay.ts</code>, <code>main.ts</code></td></tr>
+  <tr><td>Rate-based utility, reward-decay kernel, delivery value, zone selection</td><td>§5</td><td><code>bdi/utility.ts</code> <span class="badge b-part">identity shapers only</span></td></tr>
+  <tr><td>Commitment-hysteresis intention selector (route / explore / idle)</td><td>§5.6, §9.9</td><td><code>bdi/intentions.ts</code></td></tr>
+  <tr><td>Marginal-route auction, claims, dispersion, periodic rebalance</td><td>§9</td><td><code>coordination/</code></td></tr>
+  <tr><td>Push-aware A* with crate admissibility invariant</td><td>§15</td><td><code>planning/astar.ts</code></td></tr>
+  <tr><td>Post-session analysis harness (DuckDB/NDJSON)</td><td>§16</td><td><code>scripts/analyse.ts</code></td></tr>
+</table>
+
+<h2>What's left to implement</h2>
+
+<div class="card">
+  <h3>1. Mission compiler — the LLM lane <span class="badge b-miss">MISSING</span></h3>
+  <p class="meta">DESIGN §3, §4, §10 &middot; no <code>src/mission/</code> directory exists &middot; <code>LITELLM_*</code> config vars are wired but read by nothing</p>
+  <ul class="chk">
+    <li><code>mission/compiler.ts</code> — async LLM mission compiler using the <code>litellm</code> SDK</li>
+    <li><code>mission/kinds.ts</code> — the <code>Mission</code> type/schema (§4.2). <strong>No <code>Mission</code> type exists anywhere in <code>src/</code> today.</strong></li>
+    <li>§3.1 transcribe-vs-runtime-bind hard rule (compile static structure; bind live entities at run time)</li>
+    <li>§4.1 mission classification / taxonomy</li>
+    <li>§4.3 single-slot / overwrite / teardown lifecycle (one active mission slot)</li>
+    <li>§4.4 static three-way back-end switch; <code>FALLBACK</code> resolves to <code>NOT_APPLICABLE</code> (flag is constant <code>false</code> per CLAUDE.md)</li>
+    <li>§10 keep all LLM calls strictly off the 50 ms hot loop (async, cadence-gated)</li>
+  </ul>
+  <p class="meta"><strong>Done when:</strong> a natural-language mission message arriving on the Liaison's channel is compiled into a typed <code>Mission</code> and written to the blackboard mission slot, with zero LLM work on the BDI tick path.</p>
+</div>
+
+<div class="card">
+  <h3>2. Mission as a first-class intention <span class="badge b-part">PARTIAL</span></h3>
+  <p class="meta">DESIGN §5.5, §6, §7</p>
+  <ul class="chk">
+    <li>The <strong>mission intention candidate</strong> + <code>U_mission</code>. <code>bdi/intentions.ts</code> states "four-candidate argmax <em>(three this slice)</em>" — the <code>mission</code> kind and its utility are absent.</li>
+    <li>§6 <strong>full reward shapers.</strong> <code>bdi/utility.ts</code> ships identity stubs (<code>M1</code>, <code>G1</code>) and explicitly defers subset-argmax "to when mission shapers land"; stacking + value-aware <code>putDown(subset)</code> optimisation not done.</li>
+    <li>§7 <strong>hard constraints driven by missions</strong> — priced constraint &rarr; A* edge toll; absolute constraint &rarr; <code>value(S)</code> filter. Toll infra partly exists in A*, but nothing produces mission constraints to feed it.</li>
+  </ul>
+  <p class="meta"><strong>Done when:</strong> the selector weighs an active mission against route/explore/idle using <code>U_mission</code>, and mission shapers/constraints measurably change subset choice and pathing.</p>
+</div>
+
+<div class="card">
+  <h3>3. Coordination contracts <span class="badge b-miss">MISSING</span></h3>
+  <p class="meta">DESIGN §8, §9.10 &middot; no <code>coordination/contract.ts</code></p>
+  <ul class="chk">
+    <li>Contract primitive: step-list of locals + barriers (§8.1)</li>
+    <li>Contract lifecycle: propose / accept / execute / settle (§8.2)</li>
+    <li>§8.3 handoff, §8.4 rendezvous, §8.5 sync-gate worked types</li>
+    <li>§8.6 liveness &amp; opportunity-cost accounting</li>
+    <li>§9.10 mission/contract lock-precedence — the auction may not touch locked tasks</li>
+  </ul>
+  <p class="meta"><strong>Done when:</strong> a two-agent contract (e.g. handoff) completes against the live server and its bonus is realised, with the auction respecting the lock.</p>
+</div>
+
+<div class="card">
+  <h3>4. Mission back-ends <span class="badge b-miss">MISSING</span></h3>
+  <p class="meta">DESIGN §17 (PDDL), §18 (LLM-agent)</p>
+  <ul class="chk">
+    <li>§18 <strong>LLM-agent back-end</strong> — the <em>intended active</em> back-end (added in the newest design commit): ReAct loop on a frozen snapshot, five-family tool registry, working memory, reintegration + scoring.</li>
+    <li>§17 <strong>PDDL back-end</strong> — documented but flagged <strong>off</strong> (<code>FALLBACK=false</code>). Implement only if that flag is flipped.</li>
+  </ul>
+  <p class="meta"><strong>Done when:</strong> a mission whose kind routes to the LLM-agent back-end executes end-to-end and its result reintegrates into the utility core (§18.9).</p>
+</div>
+
+<div class="card">
+  <h3>5. Wiring &amp; verification <span class="badge b-part">PARTIAL</span></h3>
+  <ul class="chk">
+    <li>Wire the Liaison entrypoint to the mission lane: mission-message intake via the existing <code>onMissionMsg</code> channel (already in <code>external/deliveroo.ts</code>) &rarr; compiler &rarr; blackboard mission slot.</li>
+    <li>Add tests mirroring the existing 32-file suite for each new module (compiler, kinds, contract, mission intention).</li>
+  </ul>
+  <div class="crit"><strong>Observed in live play (investigate independently):</strong> Courier sat at <strong>0</strong> while Liaison reached 895. Possibly an auction/allocation tuning gap (relevant to recent coordination commits), not part of the mission work above.</div>
+</div>
+
+<h2>Suggested order (critical path)</h2>
+<ol>
+  <li><strong>§3/§4 compiler + <code>Mission</code> type</strong> — nothing else in the mission half can be exercised without it.</li>
+  <li><strong>§5.5 mission intention + <code>U_mission</code></strong> — makes a compiled mission actually influence behaviour.</li>
+  <li><strong>§6/§7 shapers &amp; constraints</strong> — gives missions teeth (subsets, tolls, filters).</li>
+  <li><strong>§18 LLM-agent back-end</strong> and <strong>§8 contracts</strong> — the richest behaviours, built on the above.</li>
+</ol>
+
+<div class="note"><strong>Confidence note.</strong> This reflects DESIGN.md's structure and the key source files; not every line of all 32 tests was read, so a "partial" item may be slightly more complete than credited. Priority order is a recommendation, not a constraint. Always treat <code>DESIGN.md</code> as the source of truth — if code and DESIGN conflict, the code is wrong.</div>
+
+</body>
+</html>
