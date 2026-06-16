@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { isMissionDraft, assembleMission, type MissionDraft } from '../src/mission/kinds.js'
+import { isMission, isMissionDraft, assembleMission, type MissionDraft } from '../src/mission/kinds.js'
 
 const goodDraft: MissionDraft = {
   kind: 'CANDIDATE_INTENTION',
@@ -25,5 +25,14 @@ test('assembleMission adds id/rawText/status', () => {
   expect(m.rawText).toBe('hello text')
   expect(m.status).toBe('CLASSIFIED')
   expect(m.kind).toBe('CANDIDATE_INTENTION')
+})
+
+test('isMission accepts an assembled mission and rejects a bare draft / garbage', () => {
+  const m = assembleMission(goodDraft, 'hello', 'm-1')
+  expect(isMission(m)).toBe(true)
+  expect(isMission(goodDraft)).toBe(false) // no id/rawText/status
+  expect(isMission(null)).toBe(false)
+  expect(isMission({ ...m, status: 'NOPE' })).toBe(false)
+  expect(isMission({ ...m, id: 42 })).toBe(false)
 })
 
