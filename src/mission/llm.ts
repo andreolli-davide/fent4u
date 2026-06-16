@@ -20,20 +20,7 @@ export interface FunctionCall { name: string; arguments: string }
 export type ChatTurn = { call: FunctionCall } | { content: string }
 export type ChatFn = (msgs: ChatMsg[], fns: readonly FunctionDef[]) => Promise<ChatTurn>
 
-const OPENAI_MODEL = /^(gpt-|openai\/)/
-
-export function assertOpenAiModel(model: string): void {
-  if (!OPENAI_MODEL.test(model)) {
-    throw new Error(
-      `LITELLM_MODEL="${model}" cannot do function calling: litellm routes only gpt-*/openai/* ` +
-      `to the OpenAI handler; other handlers flatten messages and drop functions. ` +
-      `Use an OpenAI-compatible model id and set LITELLM_BASE_URL.`,
-    )
-  }
-}
-
 export function makeChat(cfg: Config): ChatFn {
-  assertOpenAiModel(cfg.LITELLM_MODEL)
   return async (msgs, fns) => {
     // litellm's HandlerParams type does not list `functions`/`function_call` on messages,
     // but the OpenAI handler forwards them — cast at this single boundary.

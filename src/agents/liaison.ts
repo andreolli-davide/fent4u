@@ -35,7 +35,7 @@ async function boot(config: Config, params: Params): Promise<void> {
   claims = new ClaimStore()
 
   const missionSlot = new MissionSlot()
-  const chat = makeChat(config) // throws fast if LITELLM_MODEL is not an OpenAI-handler id
+  const chat = makeChat(config)
   const intake = createIntake({
     slot: missionSlot,
     compile: (raw) => compile(raw, chat),
