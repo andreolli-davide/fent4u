@@ -80,6 +80,15 @@ export function chooseExplore(
     if (!Number.isFinite(dd)) continue
     const lastSeen = seenAt.get(tileKey(s))
     const staleness = lastSeen === undefined ? tnow : tnow - lastSeen
+    // Skip spawners currently in sensor view (markSeen reset them THIS tick ⇒
+    // staleness 0). There is no frontier to gain by "exploring" a tile we can already
+    // see, and the at-distance-0 spawner otherwise wins the argmax and freezes the
+    // agent camping on it (it re-arrives every tick, never patrols — observed on
+    // long-hallway maps: one agent visited 4 tiles in 45s and scored 0). Parcels that
+    // appear on a visible spawner are still collected via the ROUTE candidate, not
+    // explore; explore now seeks genuinely UNSEEN regions so the agent patrols. A
+    // never-seen spawner has staleness = tnow (large), so it is always kept.
+    if (staleness <= 0) continue
     const value = params.theta_explore * (1 + params.kappa_info * staleness)
     const u = rate(value, dd, params.alpha) + params.theta_disp * awayFromPartner(s, partnerTarget, dRef, dist)
     if (best === null || u > best.u) best = { target: { tile: s, staleness }, u }
