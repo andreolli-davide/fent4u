@@ -197,6 +197,10 @@ export class BdiLoop {
     if (ex !== null) cands.push(ex)
     cands.push({ intention: { kind: 'idle' }, u: this.params.eps_idle })
 
+    // Candidate trace (debug, additive): the U of every candidate the selector ranks
+    // this tick — lets us see WHY one was chosen (e.g. route lost to explore on rate).
+    this.log.debug({ tick: tnow, candidates: cands.map((c) => ({ kind: c.intention.kind, u: c.u })), committed: this.committed?.kind ?? null }, 'candidates')
+
     const chosenCand = select(cands, this.committed, this.params.h_commit)
     const chosen = chosenCand.intention
     if (!matches(this.committed, chosen)) {
