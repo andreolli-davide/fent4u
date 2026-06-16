@@ -6,8 +6,8 @@ const base = {
   DELIVEROO_PORT: '8080',
   TOKEN_LIAISON: 'tok-a',
   TOKEN_COURIER: 'tok-b',
-  LITELLM_MODEL: 'gpt-4o',
-  LITELLM_API_KEY: 'sk-test',
+  OPENAI_MODEL: 'gpt-4o',
+  OPENAI_API_KEY: 'sk-test',
 }
 
 describe('parseConfig', () => {
@@ -17,7 +17,7 @@ describe('parseConfig', () => {
     expect(config.DELIVEROO_PORT).toBe(8080)
     expect(config.LOG_LEVEL).toBe('info')
     expect(config.LOG_DIR).toBe('./logs')
-    expect(config.LITELLM_BASE_URL).toBe('')
+    expect(config.OPENAI_BASE_URL).toBe('')
   })
 
   it('coerces DELIVEROO_PORT to number', () => {
@@ -27,8 +27,8 @@ describe('parseConfig', () => {
   })
 
   it('throws when a required var is missing', () => {
-    const { LITELLM_API_KEY: _, ...incomplete } = base
-    expect(() => parseConfig(incomplete)).toThrow('Missing required env var: LITELLM_API_KEY')
+    const { OPENAI_API_KEY: _, ...incomplete } = base
+    expect(() => parseConfig(incomplete)).toThrow('Missing required env var: OPENAI_API_KEY')
   })
 
   it('throws on invalid LOG_LEVEL', () => {
@@ -40,11 +40,11 @@ describe('parseConfig', () => {
       ...base,
       LOG_LEVEL: 'debug',
       LOG_DIR: '/tmp/logs',
-      LITELLM_BASE_URL: 'http://proxy:4000',
+      OPENAI_BASE_URL: 'http://proxy:4000',
     })
     expect(config.LOG_LEVEL).toBe('debug')
     expect(config.LOG_DIR).toBe('/tmp/logs')
-    expect(config.LITELLM_BASE_URL).toBe('http://proxy:4000')
+    expect(config.OPENAI_BASE_URL).toBe('http://proxy:4000')
   })
 
   it('throws when DELIVEROO_PORT is not a valid number', () => {

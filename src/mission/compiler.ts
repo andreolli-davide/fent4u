@@ -1,4 +1,4 @@
-// Bounded ReAct loop over litellm function calling. Pure transform: no game state, no map,
+// Bounded ReAct loop over OpenAI function calling. Pure transform: no game state, no map,
 // no side effects (the caller owns slot writes / channel replies). DESIGN §3, §4, §10.
 
 import { calc } from './calc.js'
@@ -81,8 +81,13 @@ export async function compile(rawText: string, chat: ChatFn): Promise<CompileRes
     if (name === CALCULATE_FN.name) {
       const expr = (args as { expr?: unknown }).expr
       const v = typeof expr === 'string' ? calc(expr) : null
-      msgs.push({ role: 'assistant', content: null, function_call: turn.call })
-      msgs.push({ role: 'function', name: CALCULATE_FN.name, content: v === null ? 'error: invalid expression' : String(v) })
+      const callId = turn.call.id ?? `call_${iter}`
+      msgs.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: callId, type: 'function', function: { name, arguments: rawArgs } }],
+      })
+      msgs.push({ role: 'tool', tool_call_id: callId, content: v === null ? 'error: invalid expression' : String(v) })
       continue
     }
 
