@@ -1,43 +1,50 @@
-// Minimal typed wrapper over litellm `completion` for legacy function calling.
-// litellm's TS types omit `functions`-on-call result, `name`-on-message, and `function_call`,
-// but its OpenAI handler spreads all params into openai.chat.completions.create, so these
-// fields reach the backend at runtime. We declare the wire shape locally (CLAUDE.md: minimal stubs).
+// Minimal typed wrapper over the OpenAI SDK `chat.completions.create` using the modern
+// `tools`/`tool_choice` function-calling API (OpenRouter rejects the deprecated `functions`).
+// OpenRouter (and any OpenAI-compatible proxy) is reached via baseUrl; the model string is
+// forwarded verbatim, so provider-prefixed ids like "deepseek/deepseek-v4-flash" pass through.
 
-import { completion } from 'litellm'
+import OpenAI from 'openai'
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import type { Config } from '../types/config.js'
 
+export interface ToolCall { id: string; type: 'function'; function: { name: string; arguments: string } }
+
 export interface ChatMsg {
-  role: 'system' | 'user' | 'assistant' | 'function'
+  role: 'system' | 'user' | 'assistant' | 'tool'
   content: string | null
-  name?: string                                  // required on role:'function' results
-  function_call?: { name: string; arguments: string } // echoed on the assistant turn that called
+  tool_call_id?: string      // required on role:'tool' results — links back to the assistant call
+  tool_calls?: ToolCall[]    // present on the assistant turn that invoked a tool
 }
 
 export interface FunctionDef { name: string; description: string; parameters: Record<string, unknown> }
-export interface FunctionCall { name: string; arguments: string }
+// `id` carries the model-assigned tool_call id so the caller can echo a matching tool result.
+export interface FunctionCall { id?: string; name: string; arguments: string }
 
 // One turn: either the model called a function, or it returned plain content.
 export type ChatTurn = { call: FunctionCall } | { content: string }
 export type ChatFn = (msgs: ChatMsg[], fns: readonly FunctionDef[]) => Promise<ChatTurn>
 
 export function makeChat(cfg: Config): ChatFn {
+  const client = new OpenAI({
+    apiKey: cfg.OPENAI_API_KEY,
+    baseURL: cfg.OPENAI_BASE_URL || undefined,
+  })
+
   return async (msgs, fns) => {
-    // litellm's HandlerParams type does not list `functions`/`function_call` on messages,
-    // but the OpenAI handler forwards them — cast at this single boundary.
-    const res = await completion({
-      model: cfg.LITELLM_MODEL,
-      apiKey: cfg.LITELLM_API_KEY,
-      baseUrl: cfg.LITELLM_BASE_URL || undefined,
+    const res = await client.chat.completions.create({
+      model: cfg.OPENAI_MODEL,
       temperature: 0,
-      messages: msgs as unknown as never,
-      functions: fns as unknown as never,
-      function_call: 'auto' as unknown as never,
+      // ChatMsg mirrors the tool message-param shape; cast once at the boundary rather than
+      // reshaping every push site in compiler.ts.
+      messages: msgs as ChatCompletionMessageParam[],
+      tools: fns.map((f) => ({ type: 'function' as const, function: f })),
+      tool_choice: 'auto',
       stream: false,
     })
-    const msg = 'choices' in res ? res.choices[0]?.message : undefined
-    const fc = msg?.function_call
-    if (fc && typeof fc.name === 'string' && typeof fc.arguments === 'string') {
-      return { call: { name: fc.name, arguments: fc.arguments } }
+    const msg = res.choices[0]?.message
+    const tc = msg?.tool_calls?.[0]
+    if (tc && tc.type === 'function') {
+      return { call: { id: tc.id, name: tc.function.name, arguments: tc.function.arguments } }
     }
     return { content: msg?.content ?? '' }
   }

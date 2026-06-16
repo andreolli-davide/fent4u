@@ -37,9 +37,9 @@ const fakeConfig: Config = {
   DELIVEROO_PORT: 8080,
   TOKEN_LIAISON: 'L',
   TOKEN_COURIER: 'C',
-  LITELLM_MODEL: 'm',
-  LITELLM_API_KEY: 'k',
-  LITELLM_BASE_URL: '',
+  OPENAI_MODEL: 'm',
+  OPENAI_API_KEY: 'k',
+  OPENAI_BASE_URL: '',
   LOG_LEVEL: 'info',
   LOG_DIR: './logs',
 }

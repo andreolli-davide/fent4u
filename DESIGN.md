@@ -1758,7 +1758,7 @@ The "simulation" is therefore **not** a heavy simulator — only the determinist
 
 **Loop guard (updated from the tutorial's Step 7).** The "≤ 1 Action per output" rule becomes: *N independent, side-effect-free tool calls per turn allowed*; no `FinalAnswer` in a turn with pending tool calls; at most `BATCH_MAX` calls per turn.
 
-**API.** Batching maps naturally to **native function-calling** (the OpenAI-compatible LiteLLM proxy's `tool_calls` array carries several calls in one assistant message). The textual `Action: / Action Input:` format of the slides is kept only as a didactic reference.
+**API.** Batching maps naturally to **native function-calling** (the OpenAI SDK's `tool_calls` array carries several calls in one assistant message; the endpoint may be OpenAI or any OpenAI-compatible proxy such as OpenRouter). The textual `Action: / Action Input:` format of the slides is kept only as a didactic reference.
 
 **Born-stale guard.** When the plan lands, the §17.7.2 Phase-B freshness check applies: if the belief-signature changed materially since `t0`, the plan is born stale → one re-plan from a fresh snapshot, else `PLAN_FAIL`. The coherence horizon is `≈ 3 · DECAY_INTERVAL_TICKS` (one `P_surv` half-life, §5.3) — not a new knob.
 
