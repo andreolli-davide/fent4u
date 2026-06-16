@@ -81,15 +81,16 @@ test('computes reward/tick samples between deliveries', () => {
   expect(t.rhoRef()).toBeCloseTo(2.0, 6)   // p90 of [2,2]
 })
 
-test('rhoRef is the 90th percentile, uForgone the mean', () => {
+test('rhoRef is the nearest-rank 90th percentile, uForgone the mean', () => {
   const t = new DeliveryRateTracker(10, 0)
-  // samples: deliver 1 pt every 1 tick (rate 1), except one fat 10-pt/1-tick (rate 10)
   let tick = 0
   t.record(0, tick)
-  for (let i = 0; i < 9; i++) { tick += 1; t.record(1, tick) } // nine rate-1 samples
-  tick += 1; t.record(10, tick) // one rate-10 sample
-  expect(t.uForgone()).toBeCloseTo((9 * 1 + 10) / 10, 6) // mean = 1.9
-  expect(t.rhoRef()).toBeGreaterThan(t.uForgone())        // p90 picks up the high tail
+  for (let i = 0; i < 8; i++) { tick += 1; t.record(1, tick) } // eight rate-1 samples
+  for (let i = 0; i < 2; i++) { tick += 1; t.record(10, tick) } // two rate-10 samples
+  // 10 samples sorted = [1×8, 10, 10]; p90 nearest-rank index = ceil(0.9·10) − 1 = 8 → 10.
+  expect(t.rhoRef()).toBe(10)
+  expect(t.uForgone()).toBeCloseTo((8 * 1 + 2 * 10) / 10, 6) // mean = 2.8
+  expect(t.rhoRef()).toBeGreaterThan(t.uForgone())            // p90 sits above the mean
 })
 
 test('window evicts old samples (FIFO)', () => {
@@ -145,8 +146,9 @@ export class DeliveryRateTracker {
   rhoRef(): number {
     if (this.samples.length === 0) return this.bootstrap
     const sorted = [...this.samples].sort((a, b) => a - b)
-    const idx = Math.min(sorted.length - 1, Math.floor(0.9 * sorted.length))
-    return sorted[Math.max(0, idx)]!
+    // Nearest-rank 90th percentile (0-indexed): ceil(0.9·n) − 1, clamped to [0, n−1].
+    const idx = Math.max(0, Math.ceil(0.9 * sorted.length) - 1)
+    return sorted[idx]!
   }
 }
 ```

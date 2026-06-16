@@ -33,7 +33,8 @@ export class DeliveryRateTracker {
   rhoRef(): number {
     if (this.samples.length === 0) return this.bootstrap
     const sorted = [...this.samples].sort((a, b) => a - b)
-    const idx = Math.min(sorted.length - 1, Math.floor(0.9 * sorted.length))
-    return sorted[Math.max(0, idx)]!
+    // Nearest-rank 90th percentile (0-indexed): ceil(0.9·n) − 1, clamped to [0, n−1].
+    const idx = Math.max(0, Math.ceil(0.9 * sorted.length) - 1)
+    return sorted[idx]!
   }
 }
