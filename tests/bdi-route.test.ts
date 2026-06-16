@@ -69,13 +69,16 @@ test('a contested route is worth strictly less than the same route at full value
   expect(uRoute(r, 0, dc, DEFAULT_PARAMS, contested)).toBeLessThan(uRoute(r, 0, dc, DEFAULT_PARAMS))
 })
 
-// ── routeFromClaims: service a committed parcel set in full (§9.7) ──────────
+// ── routeFromClaims: service a committed set by the emergent horizon (§9.2/§9.7) ──
 
-test('routeFromClaims includes every claimed parcel (never drops a low-value one)', () => {
-  // a worthless far parcel that buildRoute's emergent horizon would drop is still serviced
+test('routeFromClaims defers a rate-lowering claim (collect→deliver, no hoarding)', () => {
+  // 'near' raises the route rate and is routed; 'far' (worthless, distant) would tank
+  // it, so it is NOT routed THIS cycle — it stays claimed/owned and is collected after
+  // the current load is delivered. Previously routeFromClaims serviced both in full,
+  // which kept a pickup ahead of the delivery forever (the agent never scored).
   const claimed = [parcel('near', 2, 0, 10), parcel('far', 40, 0, 1)]
   const r = routeFromClaims([], claimed, { x: 1, y: 0 }, zones, 0, dc, DEFAULT_PARAMS, manhattan)!
-  expect(r.pickups.map((p) => p.id).sort()).toEqual(['far', 'near'])
+  expect(r.pickups.map((p) => p.id)).toEqual(['near'])
 })
 
 test('routeFromClaims of an empty commitment is null', () => {
