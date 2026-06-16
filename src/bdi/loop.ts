@@ -3,7 +3,7 @@ import type { DeliverooClient } from '../external/deliveroo.js'
 import type { PerceptionSnapshot, Pos, Tile } from '../types/perception.js'
 import { BeliefBase, type ParcelBelief, type AgentBelief } from '../blackboard/beliefs.js'
 import { buildGrid, buildObstacles, planPath, isPushAdmissible, type Grid, type PlanCtx, type Dir } from '../planning/astar.js'
-import { decayConsts, pAvail, tileKey, M1, G1, type DecayConsts, type EnemyThreat } from './utility.js'
+import { decayConsts, pAvail, tileKey, M1, G1, W1, type DecayConsts, type EnemyThreat } from './utility.js'
 import { bestSubset } from '../mission/shapers.js'
 import { buildRoute, uRoute, routeFromClaims } from './route.js'
 import { select, chooseExplore, matches, type Intention, type Candidate } from './intentions.js'
@@ -172,6 +172,8 @@ export class BdiLoop {
 
     // candidates
     const carried = beliefs.self.carrying.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
+    const cm = this.mission ? this.mission.view.countShaper() : M1
+    const cg = this.mission ? this.mission.view.zoneShaper() : G1
     const { pool, weight } = this.buildPool(beliefs, self, tnow, dist)
     // Pickups weight their P_avail (survival × race); carried parcels are in hand ⇒ 1 (§5.5).
     const weightOf = (p: ParcelBelief): number => weight.get(p.id) ?? 1
@@ -184,18 +186,18 @@ export class BdiLoop {
     // leftover pool waits for the next tick). Solo (no partner channel): no auction runs, so
     // fall back to greedy buildRoute over the pool to still pursue visible parcels.
     const route = this.coord
-      ? routeFromClaims(carried, ownClaimed, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf)
+      ? routeFromClaims(carried, ownClaimed, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf, cm, cg)
       : ownClaimed.length > 0 || carried.length > 0
-        ? routeFromClaims(carried, ownClaimed, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf)
-        : buildRoute(carried, pool, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf)
+        ? routeFromClaims(carried, ownClaimed, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf, cm, cg)
+        : buildRoute(carried, pool, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf, cm, cg)
     const cands: Candidate[] = []
-    if (route !== null) cands.push({ intention: { kind: 'route', route }, u: uRoute(route, tnow, this.dc, this.params, weightOf) })
+    if (route !== null) cands.push({ intention: { kind: 'route', route }, u: uRoute(route, tnow, this.dc, this.params, weightOf, cm, cg) })
     let partnerTarget: Pos | null = null
     if (this.coord) {
       const partner = this.partnerBelief(beliefs)
       const pClaims = this.claimedParcels(beliefs, this.coord.partner)
       const pRoute = (partner !== null && pClaims.length > 0)
-        ? routeFromClaims(this.carriedOf(beliefs), pClaims, partner.pos, this.grid.deliveryZones, tnow, this.dc, this.params, dist)
+        ? routeFromClaims(this.carriedOf(beliefs), pClaims, partner.pos, this.grid.deliveryZones, tnow, this.dc, this.params, dist, W1, cm, cg)
         : null
       partnerTarget = pRoute?.pickups[0]?.pos ?? partner?.pos ?? null
     }
