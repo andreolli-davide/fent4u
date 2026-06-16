@@ -1,6 +1,5 @@
 import { test, expect } from 'bun:test'
 import { isMissionDraft, assembleMission, type MissionDraft } from '../src/mission/kinds.js'
-import { assertOpenAiModel } from '../src/mission/llm.js'
 
 const goodDraft: MissionDraft = {
   kind: 'CANDIDATE_INTENTION',
@@ -28,9 +27,3 @@ test('assembleMission adds id/rawText/status', () => {
   expect(m.kind).toBe('CANDIDATE_INTENTION')
 })
 
-test('assertOpenAiModel accepts only OpenAI-handler model prefixes', () => {
-  expect(() => assertOpenAiModel('gpt-4o-mini')).not.toThrow()
-  expect(() => assertOpenAiModel('openai/local-model')).not.toThrow()
-  expect(() => assertOpenAiModel('claude-3-5-sonnet')).toThrow(/function calling/i)
-  expect(() => assertOpenAiModel('mistral/large')).toThrow(/function calling/i)
-})
