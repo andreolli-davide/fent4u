@@ -2,6 +2,7 @@ import { test, expect } from 'bun:test'
 import { select, matches, chooseExplore, type Intention, type Candidate } from '../src/bdi/intentions.js'
 import { DEFAULT_PARAMS } from '../src/bdi/params.js'
 import type { Pos } from '../src/types/perception.js'
+import { assembleMission } from '../src/mission/kinds.js'
 
 const idle: Intention = { kind: 'idle' }
 const routeA: Intention = { kind: 'route', route: { pickups: [{ id: 'p1', pos: { x: 1, y: 0 }, rewardSeen: 10, carriedBy: null, lastSeen: 0 }], zone: { x: 0, y: 0 }, delivered: [], L: 2 } }
@@ -76,4 +77,22 @@ test('chooseExplore prefers farther spawner when partnerTarget is near the close
   const exploreIntent = t?.intention as Extract<Intention, { kind: 'explore' }> | undefined
   // spawnerB is farther from partnerTarget → dispersion bonus → should be chosen
   expect(exploreIntent?.target.tile).toEqual(spawnerB)
+})
+
+const mk = (id: string) => assembleMission({ kind: 'CANDIDATE_INTENTION', payoff: 10, abstractIntent: 'go', params: { targetTile: { tag: 'TEXT_BOUND', x: 1, y: 0 } } }, 'raw', id)
+
+test('matches: same mission id matches, different id does not', () => {
+  const a = { kind: 'mission', mission: mk('m-1') } as const
+  const b = { kind: 'mission', mission: mk('m-1') } as const
+  const c = { kind: 'mission', mission: mk('m-2') } as const
+  expect(matches(a, b)).toBe(true)
+  expect(matches(a, c)).toBe(false)
+})
+
+test('select picks a dominating mission candidate', () => {
+  const chosen = select([
+    { intention: { kind: 'idle' }, u: 0.001 },
+    { intention: { kind: 'mission', mission: mk('m-1') }, u: 5 },
+  ], null, 0.15)
+  expect(chosen.intention.kind).toBe('mission')
 })

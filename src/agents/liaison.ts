@@ -4,6 +4,7 @@ import { Blackboard } from '../blackboard/blackboard.js'
 import { BdiLoop } from '../bdi/loop.js'
 import { ClaimStore, isClaimMsg } from '../coordination/claims.js'
 import { MissionSlot } from '../mission/slot.js'
+import { TeamMissionView } from '../mission/view.js'
 import { makeChat } from '../mission/llm.js'
 import { compile } from '../mission/compiler.js'
 import { createIntake } from '../mission/intake.js'
@@ -34,7 +35,8 @@ async function boot(config: Config, params: Params): Promise<void> {
 
   claims = new ClaimStore()
 
-  const missionSlot = new MissionSlot()
+  const missionView = new TeamMissionView()
+  const missionSlot = new MissionSlot((m) => missionView.set(m))
   const chat = makeChat(config)
   const intake = createIntake({
     slot: missionSlot,
@@ -55,6 +57,10 @@ async function boot(config: Config, params: Params): Promise<void> {
   }, claims, {
     partner: 'courier',
     send,
+  }, {
+    view: missionView,
+    pursue: true,
+    onSatisfied: () => missionSlot.supersede(),
   })
   let booted = false
   client.onPerception((snap) => {

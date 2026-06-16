@@ -16,6 +16,11 @@ export interface Params {
   auction_budget_ms: number  // anytime cap on the SSI auction (ms)
   theta_disp: number         // dispersion weight (tie-break-only)
   partner_lost_ticks: number // no a2a from partner for this many ticks ⇒ degrade, reclaim its soft claims (§9.7/§11)
+  theta_mission: number      // global mission utility weight (θ_mission, §5.5)
+  c: number                  // rate-ceiling factor in U_mission (§5.5)
+  p_feasible_min: number     // mission dropped below this feasibility (§5.5/§12)
+  rate_window: number        // retained reward/tick samples in DeliveryRateTracker
+  rate_bootstrap: number     // delivery rate used before any sample exists
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -32,6 +37,11 @@ export const DEFAULT_PARAMS: Params = {
   auction_budget_ms: 8,
   theta_disp: 0.05,
   partner_lost_ticks: 25,
+  theta_mission: 1.0,
+  c: 1.5,
+  p_feasible_min: 0.3,
+  rate_window: 20,
+  rate_bootstrap: 0.5,
 }
 
 type Range = [min: number, max: number]
@@ -49,6 +59,11 @@ const RANGES: Record<keyof Params, Range> = {
   auction_budget_ms: [0, 1000],
   theta_disp: [0, 4],
   partner_lost_ticks: [1, 100000],
+  theta_mission: [0, 4],
+  c: [0, 10],
+  p_feasible_min: [0, 1],
+  rate_window: [1, 1000],
+  rate_bootstrap: [0, 100],
 }
 
 export function loadParams(path = 'config/params.yaml'): Params {

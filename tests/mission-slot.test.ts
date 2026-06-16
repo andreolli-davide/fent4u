@@ -33,3 +33,17 @@ test('supersede clears the slot, marks status, bumps epoch', () => {
   expect(m.status).toBe('SUPERSEDED')
   expect(s.epoch()).toBeGreaterThan(e1)
 })
+
+test('onChange fires with the current mission on install and supersede', () => {
+  const seen: Array<string | null> = []
+  const s = new MissionSlot((m) => seen.push(m?.id ?? null))
+  s.install(mk('a'))
+  s.install(mk('b'))
+  s.supersede()
+  expect(seen).toEqual(['a', 'b', null])
+})
+
+test('no onChange callback is safe', () => {
+  const s = new MissionSlot()
+  expect(() => { s.install(mk('a')); s.supersede() }).not.toThrow()
+})
