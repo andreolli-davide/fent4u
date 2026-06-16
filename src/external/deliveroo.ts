@@ -290,12 +290,25 @@ export async function connect(
   // Threshold: 3 clock periods — enough to see a real sensing if the server is
   // healthy, but short enough that blocked agents recover within 3 ticks.
   const heartbeatMs = 3 * consts.CLOCK
+  // Empty world used to BOOTSTRAP the loop before the first server sensing arrives.
+  const emptyIO = { parcels: [], agents: [], crates: [] } as unknown as IOSensing
   const heartbeatTimer = setInterval(() => {
-    if (!perceptionCb || lastRawSensing === null) return
+    if (!perceptionCb) return
     if (Date.now() - lastSensingMs >= heartbeatMs) {
-      logger.debug({ role }, 'sensing heartbeat — firing stale snapshot')
+      // Two jobs:
+      //  (a) heartbeat — re-fire the last sensing when the server's sensor goes quiet
+      //      (blocked move / static surroundings) so the loop keeps ticking.
+      //  (b) BOOTSTRAP — when the server never sent an initial sensing (a real handshake
+      //      race seen in play: one agent's first sensing arrived 41 s late, leaving it
+      //      idle and scoring 0), drive the loop from `me` (self pos, from the `you` event)
+      //      with an empty world so the agent can start exploring and MOVE. Moving changes
+      //      its view and triggers real sensing — breaking the "need sensing to move, need
+      //      to move to get sensing" deadlock. The real map is already known, so exploring
+      //      is safe. Once real sensing arrives, lastRawSensing takes over.
+      const io = lastRawSensing ?? emptyIO
+      logger.debug({ role, bootstrap: lastRawSensing === null }, 'sensing heartbeat')
       lastSensingMs = Date.now()
-      perceptionCb(normalizeSensing(lastRawSensing, me, tick(), logger))
+      perceptionCb(normalizeSensing(io, me, tick(), logger))
     }
   }, consts.CLOCK)
 
