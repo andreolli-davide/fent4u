@@ -88,19 +88,6 @@ export function vValue(parcels: ParcelBelief[], z: Pos, L: number, tnow: number,
   return g(z) * m(parcels.length) * sum
 }
 
-/**
- * §6.1 reactive subset choice on a delivery tile. With m≡1 (default) the best
- * bundle is all positive-Rnow carried parcels — value is monotone in set size.
- *
- * NOTE: `m` and `g` shapers only affect the returned `value` computation, NOT
- * subset selection. Full argmax over subsets (sorted-prefix search) is deferred
- * to when mission shapers land (§6.1). Do not pass a non-identity `m` expecting
- * an optimal subset to be chosen.
- */
-export function deliverBundle(carried: ParcelBelief[], tile: Pos, tnow: number, dc: DecayConsts, m: CountShaper = M1, g: ZoneShaper = G1): { set: ParcelBelief[]; value: number } {
-  const set = carried.filter((p) => rnow(p, tnow, dc) > 0)
-  return { set, value: vValue(set, tile, 0, tnow, dc, m, g) }
-}
 
 export interface ZonePick { zone: Pos; L: number; rate: number }
 

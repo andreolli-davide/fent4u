@@ -3,7 +3,8 @@ import type { DeliverooClient } from '../external/deliveroo.js'
 import type { PerceptionSnapshot, Pos, Tile } from '../types/perception.js'
 import { BeliefBase, type ParcelBelief, type AgentBelief } from '../blackboard/beliefs.js'
 import { buildGrid, buildObstacles, planPath, isPushAdmissible, type Grid, type PlanCtx, type Dir } from '../planning/astar.js'
-import { decayConsts, pAvail, deliverBundle, tileKey, type DecayConsts, type EnemyThreat } from './utility.js'
+import { decayConsts, pAvail, tileKey, M1, G1, type DecayConsts, type EnemyThreat } from './utility.js'
+import { bestSubset } from '../mission/shapers.js'
 import { buildRoute, uRoute, routeFromClaims } from './route.js'
 import { select, chooseExplore, matches, type Intention, type Candidate } from './intentions.js'
 import type { Params } from './params.js'
@@ -339,7 +340,9 @@ export class BdiLoop {
 
   private async doDeliver(beliefs: BeliefBase, tile: Pos, tnow: number): Promise<void> {
     const carried = beliefs.self.carrying.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
-    const bundle = deliverBundle(carried, tile, tnow, this.dc)
+    const m = this.mission ? this.mission.view.countShaper() : M1
+    const g = this.mission ? this.mission.view.zoneShaper() : G1
+    const bundle = bestSubset(carried, tile, tnow, this.dc, m, g, this.params.expiry_floor_ticks)
     const ids = bundle.set.map((p) => p.id)
     if (ids.length === 0) return
     this.acting = true
