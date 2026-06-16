@@ -70,7 +70,7 @@ refactor(astar): extract push admissibility check
 
 - **Bun** is the TypeScript runtime — no Node.js, no `ts-node`
 - SDK: `@unitn-asa/deliveroo-js-sdk` (npm) — official Deliveroo.js client
-- LLM: `litellm` (npm JS SDK) — unified interface for mission compiler (§3 DESIGN.md)
+- LLM: `openai` (npm JS SDK) — OpenAI-compatible client for mission compiler (§3 DESIGN.md); set `OPENAI_BASE_URL` to target OpenRouter or any compatible proxy
 
 ## Process Model — Two Bun Workers (MANDATORY)
 

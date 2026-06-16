@@ -1,4 +1,4 @@
-// The typed Mission (DESIGN §4.2 subset this slice produces) + the litellm function schemas
+// The typed Mission (DESIGN §4.2 subset this slice produces) + the OpenAI function schemas
 // + a hand-written boundary guard on `unknown`.
 
 export type MissionKind =
@@ -72,7 +72,7 @@ export function assembleMission(draft: MissionDraft, rawText: string, id: string
   return { ...draft, id, rawText, status: 'CLASSIFIED' }
 }
 
-// ── litellm function (legacy `functions` API) schemas ─────────────────────────
+// ── OpenAI tool (function-calling) schemas ────────────────────────────────────
 // `parameters` is a JSON Schema object. `params` is left permissive (validated by the guard +
 // normalised in Task 4) because it is kind-discriminated.
 
