@@ -77,7 +77,7 @@ self.onmessage = (event: MessageEvent<WorkerEnvelope>) => {
   if (envelope.kind === 'init') {
     if (booting) return
     booting = true
-    void boot(envelope.config, envelope.params)
+    void boot(envelope.config, envelope.params).catch((err: unknown) => self.reportError(err instanceof Error ? err : new Error(String(err))))
     return
   }
   if (envelope.kind === 'a2a') {
