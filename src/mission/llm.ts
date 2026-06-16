@@ -42,7 +42,7 @@ export function makeChat(cfg: Config): ChatFn {
       apiKey: cfg.LITELLM_API_KEY,
       baseUrl: cfg.LITELLM_BASE_URL || undefined,
       temperature: 0,
-      messages: msgs as unknown as { role: string; content: string | null }[],
+      messages: msgs as unknown as never,
       functions: fns as unknown as never,
       function_call: 'auto' as unknown as never,
       stream: false,
