@@ -246,8 +246,28 @@ export class BdiLoop {
   }
 
   private async act(chosen: Intention, beliefs: BeliefBase, ctx: PlanCtx, tnow: number): Promise<void> {
-    if (chosen.kind === 'idle') return
     const self = beliefs.self.pos
+    // Decision trace (debug only, additive — no behaviour change). The walk-over
+    // signal is: `underfoot` non-empty AND action ≠ pickup ⇒ the agent is leaving a
+    // parcel it is standing on. `underfootClaimed` says whether the auction gave it
+    // to me, so a walk-over over an UNclaimed underfoot parcel is the §9.7 case.
+    const underfoot = [...beliefs.parcels.values()]
+      .filter((p) => p.carriedBy === null && p.pos.x === self.x && p.pos.y === self.y)
+      .map((p) => p.id)
+    const trace = {
+      tick: tnow,
+      pos: self,
+      intent: chosen.kind,
+      carrying: beliefs.self.carrying.length,
+      underfoot,
+      underfootClaimed: underfoot.some((id) => this.claims.claimedBy(id) === this.client.role),
+    }
+
+    if (chosen.kind === 'idle') {
+      this.log.debug({ ...trace, action: 'idle' }, 'action')
+      return
+    }
+
     let goal: Pos
     let atGoalAction: 'pickup' | 'deliver' | null = null
 
@@ -267,13 +287,15 @@ export class BdiLoop {
     if (self.x === goal.x && self.y === goal.y) {
       if (atGoalAction === 'pickup') await this.doPickup(beliefs, tnow)
       else if (atGoalAction === 'deliver') await this.doDeliver(beliefs, goal, tnow)
+      else this.log.debug({ ...trace, action: 'arrived', goal }, 'action') // explore target reached
       return
     }
 
-    await this.stepToward(beliefs, ctx, self, goal)
+    const dir = await this.stepToward(beliefs, ctx, self, goal)
+    this.log.debug({ ...trace, action: 'move', goal, dir }, 'action')
   }
 
-  private async stepToward(beliefs: BeliefBase, ctx: PlanCtx, self: Pos, goal: Pos): Promise<void> {
+  private async stepToward(beliefs: BeliefBase, ctx: PlanCtx, self: Pos, goal: Pos): Promise<Dir | 'blocked'> {
     let res = planPath(this.grid, ctx, self, goal)
     // Push-aware search hit its budget — NOT proof of unreachability. Re-plan with
     // crates-as-walls, the safe anytime fallback (§15.3), instead of giving up.
@@ -287,13 +309,15 @@ export class BdiLoop {
         res = planPath(this.grid, { ...ctx, cratesAsWalls: true }, self, goal)
       }
     }
-    if (res.firstStep === null) return
+    if (res.firstStep === null) return 'blocked' // no path this tick (returned for the trace log)
+    const dir = res.firstStep.dir as Dir
     this.acting = true
     try {
-      await this.client.move(res.firstStep.dir as Dir)
+      await this.client.move(dir)
     } finally {
       this.acting = false
     }
+    return dir
   }
 
   private async doPickup(beliefs: BeliefBase, tnow: number): Promise<void> {
@@ -308,6 +332,7 @@ export class BdiLoop {
           this.broadcast({ kind: 'release', parcelId: id, epoch: tnow })
         }
       }
+      this.log.debug({ tick: tnow, pos: beliefs.self.pos, action: 'pickup', got: ids }, 'action')
     } finally {
       this.acting = false
     }
@@ -322,6 +347,7 @@ export class BdiLoop {
     try {
       await this.client.putdown(ids)
       beliefs.applyDelivery(ids)
+      this.log.debug({ tick: tnow, pos: tile, action: 'deliver', ids, value: bundle.value }, 'action')
     } finally {
       this.acting = false
     }
