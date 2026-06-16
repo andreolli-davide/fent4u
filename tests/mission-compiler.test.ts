@@ -21,6 +21,7 @@ test('compiles a CANDIDATE_INTENTION and transcribes the payoff sign', async () 
   const neg = await compile('Drop in leftmost tile to get -10', scripted([
     emit({ kind: 'CANDIDATE_INTENTION', payoff: -10, abstractIntent: 'drop leftmost', params: { rule: 'leftmost' } }),
   ]))
+  expect(neg.kind).toBe('mission')
   if (neg.kind === 'mission') expect(neg.mission.payoff).toBe(-10)
 })
 

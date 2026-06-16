@@ -78,24 +78,25 @@ export async function compile(rawText: string, chat: ChatFn): Promise<CompileRes
     let args: unknown
     try { args = JSON.parse(rawArgs) } catch { return { kind: 'discard', reason: 'malformed' } }
 
-    if (name === 'calculate') {
+    if (name === CALCULATE_FN.name) {
       const expr = (args as { expr?: unknown }).expr
       const v = typeof expr === 'string' ? calc(expr) : null
       msgs.push({ role: 'assistant', content: null, function_call: turn.call })
-      msgs.push({ role: 'function', name: 'calculate', content: v === null ? 'error: invalid expression' : String(v) })
+      msgs.push({ role: 'function', name: CALCULATE_FN.name, content: v === null ? 'error: invalid expression' : String(v) })
       continue
     }
 
-    if (name === 'answer_query') {
+    if (name === ANSWER_QUERY_FN.name) {
       const text = (args as { text?: unknown }).text
       return typeof text === 'string'
         ? { kind: 'query', answer: text }
         : { kind: 'discard', reason: 'malformed' }
     }
 
-    if (name === 'emit_mission') {
+    if (name === EMIT_MISSION_FN.name) {
       if (!isMissionDraft(args)) return { kind: 'discard', reason: 'malformed' }
       if (args.kind === 'FALLBACK') return { kind: 'discard', reason: 'not_applicable' }
+      if (args.kind === 'QUERY') return { kind: 'discard', reason: 'malformed' }
       const norm = normalize(args)
       if (norm === null) return { kind: 'discard', reason: 'malformed' }
       return { kind: 'mission', mission: assembleMission(norm, rawText, nextId()) }
