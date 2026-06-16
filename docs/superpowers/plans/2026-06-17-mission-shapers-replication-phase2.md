@@ -292,11 +292,11 @@ test('count shaper ×2 at k=3: drop-3-hold-1 from 4 carried', () => {
 })
 
 test('count penalty m(5)=0.3: never delivers the penalised count (splits to 4)', () => {
-  // all 5 = 50 -> ×0.3 = 15; top 4 = 44 -> ×1 = 44. Pick 4.
+  // all 5 = 50 -> ×0.3 = 15; top 4 = 40 -> ×1 = 40. Pick 4.
   const carried = [p('a', 10), p('b', 10), p('c', 10), p('d', 10), p('e', 10)]
   const b = bestSubset(carried, tile, 0, dc, buildCountShaper({ '5': 0.3 }), G1, 3)
   expect(b.set.length).toBe(4)
-  expect(b.value).toBe(44)
+  expect(b.value).toBe(40)
 })
 
 test('zone shaper multiplies the bundle value', () => {
