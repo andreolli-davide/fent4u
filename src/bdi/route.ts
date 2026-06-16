@@ -1,7 +1,7 @@
 import type { Pos } from '../types/perception.js'
 import type { ParcelBelief } from '../blackboard/beliefs.js'
 import type { Params } from './params.js'
-import { rate, vValue, bestZone, M1, G1, W1, type DecayConsts, type ParcelWeight } from './utility.js'
+import { rate, vValue, bestZone, M1, G1, W1, type DecayConsts, type ParcelWeight, type CountShaper, type ZoneShaper } from './utility.js'
 
 export interface Route {
   pickups: ParcelBelief[] // ordered parcels to collect
@@ -24,13 +24,13 @@ function routeLength(self: Pos, pickups: ParcelBelief[], zone: Pos, dist: Dist):
   return total
 }
 
-export function uRoute(r: Route, tnow: number, dc: DecayConsts, params: Params, weight: ParcelWeight = W1): number {
+export function uRoute(r: Route, tnow: number, dc: DecayConsts, params: Params, weight: ParcelWeight = W1, m: CountShaper = M1, g: ZoneShaper = G1): number {
   // r.L was computed at build time; accuracy degrades if the agent has moved since.
   // The BDI loop rebuilds routes each tick so drift is bounded to one tick.
-  return rate(vValue(r.delivered, r.zone, r.L, tnow, dc, M1, G1, weight), r.L, params.alpha)
+  return rate(vValue(r.delivered, r.zone, r.L, tnow, dc, m, g, weight), r.L, params.alpha)
 }
 
-function score(self: Pos, carried: ParcelBelief[], pickups: ParcelBelief[], zones: Pos[], tnow: number, dc: DecayConsts, params: Params, dist: Dist, weight: ParcelWeight): { route: Route; u: number } | null {
+function score(self: Pos, carried: ParcelBelief[], pickups: ParcelBelief[], zones: Pos[], tnow: number, dc: DecayConsts, params: Params, dist: Dist, weight: ParcelWeight, m: CountShaper, g: ZoneShaper): { route: Route; u: number } | null {
   const delivered = [...carried, ...pickups]
   // §9.2: z_route is chosen by the §6.0 tail-leg rate measured from the LAST pickup qₙ
   // (or self when carrying-only) — not by the whole-route rate from self. Zone choice is
@@ -38,19 +38,19 @@ function score(self: Pos, carried: ParcelBelief[], pickups: ParcelBelief[], zone
   const tail = pickups.length > 0 ? pickups[pickups.length - 1]!.pos : self
   const lPre = routeLength(self, pickups, tail, dist) // self → q1 → … → qₙ (trailing qₙ→qₙ leg = 0)
   if (!Number.isFinite(lPre)) return null
-  const zp = bestZone(delivered, tail, zones, tnow, dc, dist, params.alpha)
+  const zp = bestZone(delivered, tail, zones, tnow, dc, dist, params.alpha, m, g)
   if (zp === null) return null
   // U_route still uses the honest whole-route length (§9.2 eq. for U_route): prefix + tail leg.
   const L = lPre + zp.L
-  const u = rate(vValue(delivered, zp.zone, L, tnow, dc, M1, G1, weight), L, params.alpha)
+  const u = rate(vValue(delivered, zp.zone, L, tnow, dc, m, g, weight), L, params.alpha)
   return { route: { pickups, zone: zp.zone, delivered, L }, u }
 }
 
-function bestInsert(self: Pos, carried: ParcelBelief[], pickups: ParcelBelief[], p: ParcelBelief, zones: Pos[], tnow: number, dc: DecayConsts, params: Params, dist: Dist, weight: ParcelWeight): { route: Route; u: number } | null {
+function bestInsert(self: Pos, carried: ParcelBelief[], pickups: ParcelBelief[], p: ParcelBelief, zones: Pos[], tnow: number, dc: DecayConsts, params: Params, dist: Dist, weight: ParcelWeight, m: CountShaper, g: ZoneShaper): { route: Route; u: number } | null {
   let best: { route: Route; u: number } | null = null
   for (let i = 0; i <= pickups.length; i++) {
     const trial = [...pickups.slice(0, i), p, ...pickups.slice(i)]
-    const s = score(self, carried, trial, zones, tnow, dc, params, dist, weight)
+    const s = score(self, carried, trial, zones, tnow, dc, params, dist, weight, m, g)
     if (s !== null && (best === null || s.u > best.u)) best = s
   }
   return best
@@ -62,15 +62,15 @@ function bestInsert(self: Pos, carried: ParcelBelief[], pickups: ParcelBelief[],
  * (emergent horizon). `pool` should already be P_avail-filtered by the caller.
  * Returns null only when carrying nothing AND no pool parcel is reachable.
  */
-export function buildRoute(carried: ParcelBelief[], pool: ParcelBelief[], self: Pos, zones: Pos[], tnow: number, dc: DecayConsts, params: Params, dist: Dist, weight: ParcelWeight = W1): Route | null {
-  let current = carried.length > 0 ? score(self, carried, [], zones, tnow, dc, params, dist, weight) : null
+export function buildRoute(carried: ParcelBelief[], pool: ParcelBelief[], self: Pos, zones: Pos[], tnow: number, dc: DecayConsts, params: Params, dist: Dist, weight: ParcelWeight = W1, m: CountShaper = M1, g: ZoneShaper = G1): Route | null {
+  let current = carried.length > 0 ? score(self, carried, [], zones, tnow, dc, params, dist, weight, m, g) : null
   const remaining = [...pool]
 
   if (current === null && carried.length === 0) {
     let seed: { route: Route; u: number; idx: number } | null = null
     for (let idx = 0; idx < remaining.length; idx++) {
       const p = remaining[idx]!
-      const s = score(self, carried, [p], zones, tnow, dc, params, dist, weight)
+      const s = score(self, carried, [p], zones, tnow, dc, params, dist, weight, m, g)
       if (s !== null && (seed === null || s.u > seed.u)) seed = { ...s, idx }
     }
     if (seed === null) return null
@@ -83,7 +83,7 @@ export function buildRoute(carried: ParcelBelief[], pool: ParcelBelief[], self: 
     let bestAdd: { route: Route; u: number; idx: number } | null = null
     for (let idx = 0; idx < remaining.length; idx++) {
       const p = remaining[idx]!
-      const s = bestInsert(self, carried, current!.route.pickups, p, zones, tnow, dc, params, dist, weight)
+      const s = bestInsert(self, carried, current!.route.pickups, p, zones, tnow, dc, params, dist, weight, m, g)
       if (s !== null && (bestAdd === null || s.u > bestAdd.u)) bestAdd = { ...s, idx }
     }
     if (bestAdd === null || bestAdd.u <= current.u) break
@@ -99,12 +99,12 @@ export function buildRoute(carried: ParcelBelief[], pool: ParcelBelief[], self: 
  * the auction already decided to take them). Null only when carrying nothing AND
  * no claim is reachable. Pass `claimed` pre-sorted by id for replica-determinism.
  */
-export function routeFromClaims(carried: ParcelBelief[], claimed: ParcelBelief[], self: Pos, zones: Pos[], tnow: number, dc: DecayConsts, params: Params, dist: Dist, weight: ParcelWeight = W1): Route | null {
+export function routeFromClaims(carried: ParcelBelief[], claimed: ParcelBelief[], self: Pos, zones: Pos[], tnow: number, dc: DecayConsts, params: Params, dist: Dist, weight: ParcelWeight = W1, m: CountShaper = M1, g: ZoneShaper = G1): Route | null {
   if (carried.length === 0 && claimed.length === 0) return null
-  let cur = score(self, carried, [], zones, tnow, dc, params, dist, weight)
+  let cur = score(self, carried, [], zones, tnow, dc, params, dist, weight, m, g)
   if (cur === null) return null // no reachable zone
   for (const p of claimed) {
-    const ins = bestInsert(self, carried, cur.route.pickups, p, zones, tnow, dc, params, dist, weight)
+    const ins = bestInsert(self, carried, cur.route.pickups, p, zones, tnow, dc, params, dist, weight, m, g)
     if (ins !== null) cur = ins // unreachable insertion: skip; parcel stays claimed but unrouted this tick
   }
   return cur.route
