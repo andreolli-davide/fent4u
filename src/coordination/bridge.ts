@@ -7,6 +7,7 @@ import type { Pos } from '../types/perception.js'
 import type { ParcelBelief } from '../blackboard/beliefs.js'
 import type { Grid } from '../planning/astar.js'
 import type { Mission } from '../mission/kinds.js'
+import { bindHandoff, handoffContract, rendezvousContract, type Contract } from './contract.js'
 
 export interface AgentRef { id: AgentId; pos: Pos }
 
@@ -56,4 +57,39 @@ export function rendezvousTarget(mission: Mission, grid: Grid): Pos | null {
     if (d < bestD || (d === bestD && (z.x < best.x || (z.x === best.x && z.y < best.y)))) { best = z; bestD = d }
   }
   return { x: best.x, y: best.y }
+}
+
+// Live state the dispatcher binds against. `partner` is null until the partner is perceived (handoff
+// needs both positions to bid roles). `isClaimed` keeps the auction's soft claims off the handoff pool.
+export interface BuildCtx {
+  parcels: ParcelBelief[]
+  self: AgentRef
+  partner: AgentRef | null
+  isClaimed: (id: string) => boolean
+  tnow: number
+}
+
+// Classify a COORDINATION_CONTRACT mission into a bound, PROPOSED Contract — or null (hold/decline).
+// Liaison-only (the proposer, §2.1); the bound contract ships whole in `propose`, so the Courier
+// never re-binds. Adoption gating (§8.6) is OUT — this proposes unconditionally once bindable.
+export function buildContract(mission: Mission, grid: Grid, ctx: BuildCtx): Contract | null {
+  const deadline = mission.deadline ?? ctx.tnow + DEFAULT_CONTRACT_TTL
+  switch (mission.params.contractType) {
+    case 'HANDOFF': {
+      if (ctx.partner === null) return null
+      const parcel = selectHandoffParcel(ctx.parcels, ctx.isClaimed)
+      if (parcel === null) return null
+      const tiles = bindHandoff(grid, parcel.pos)
+      if (tiles === null) return null
+      const { picker, deliverer } = bindRoles(parcel.pos, ctx.self, ctx.partner)
+      return handoffContract(`${mission.id}:HANDOFF`, parcel.id, picker, deliverer, tiles, mission.payoff, deadline)
+    }
+    case 'RENDEZVOUS': {
+      const target = rendezvousTarget(mission, grid)
+      if (target === null) return null
+      return rendezvousContract(`${mission.id}:RENDEZVOUS`, target, RENDEZVOUS_RADIUS, mission.payoff, deadline)
+    }
+    default:
+      return null
+  }
 }
