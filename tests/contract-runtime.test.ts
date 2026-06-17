@@ -73,3 +73,20 @@ test('messages for a different contract id are ignored', () => {
   expect(rt.current()!.id).toBe('c1')
   expect(rt.current()!.posted.liaison_ready).toBeUndefined()
 })
+
+import { rendezvousContract } from '../src/coordination/contract.js'
+
+test('rendezvousContract builds the two-LOCAL + barrier template', () => {
+  const c = rendezvousContract('r1', { x: 5, y: 5 }, 3, 500, 1000)
+  expect(c.id).toBe('r1')
+  expect(c.type).toBe('RENDEZVOUS')
+  expect(c.status).toBe('PROPOSED')
+  expect(c.payoff).toBe(500)
+  expect(c.deadline).toBe(1000)
+  expect(c.posted).toEqual({})
+  expect(c.steps).toEqual([
+    { kind: 'LOCAL', agent: 'liaison', goal: { kind: 'IN_ZONE', center: { x: 5, y: 5 }, radius: 3 }, post: 'liaison_ready' },
+    { kind: 'LOCAL', agent: 'courier', goal: { kind: 'IN_ZONE', center: { x: 5, y: 5 }, radius: 3 }, post: 'courier_ready' },
+    { kind: 'BARRIER', needs: ['liaison_ready', 'courier_ready'] },
+  ])
+})
