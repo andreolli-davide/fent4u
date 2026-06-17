@@ -106,8 +106,10 @@ test('gated + CLOSED gate: agent holds (no base-play move)', async () => {
   const rt = gatedRuntime(); rt.setGate('CLOSED', 1)
   const { client, moves } = recClient('liaison')
   const view = new TeamMissionView()
-  const loop = new BdiLoop(client, DEFAULT_PARAMS, log, undefined, { partner: 'courier', send: () => {} }, { view, pursue: true, contracts: rt })
-  // parcel present, so base play WOULD move toward it if not gated.
+  // Solo mode (no coord channel): base play routes via buildRoute over the raw parcel pool,
+  // so the parcel at (0,0) WOULD produce a move toward it — making moves.toEqual([]) a real
+  // discriminator that can only pass when the CLOSED-gate early-return actually fires.
+  const loop = new BdiLoop(client, DEFAULT_PARAMS, log, undefined, undefined, { view, pursue: true, contracts: rt })
   await loop.tick(snap({ x: 3, y: 0 }))
   expect(moves).toEqual([])
   expect(advance(rt.active()!, 'liaison', { x: 3, y: 0 })).toEqual({ kind: 'gated' })
