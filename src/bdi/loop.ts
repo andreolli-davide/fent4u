@@ -77,8 +77,10 @@ export class BdiLoop {
     // tolls empty, planPath stays pure-tick, so base play is byte-for-byte unchanged.
     const mView = this.mission?.view
     const tolls = mView ? mView.tolls() : new Map<string, number>()
-    const carriedNow = this.carriedOf(beliefs)
-    const cTick = this.dc.rho * carriedNow.filter((p) => rnow(p, tnow, this.dc) > 0).length + this.rateTracker.uForgone()
+    // §7.1 c_tick uses SELF's carried bundle (the decay self incurs on its own detour) — NOT
+    // carriedOf(), which is the partner's bundle. Reused as the route candidate set below.
+    const selfCarried = beliefs.self.carrying.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
+    const cTick = this.dc.rho * selfCarried.filter((p) => rnow(p, tnow, this.dc) > 0).length + this.rateTracker.uForgone()
     const planCtx = { ...ctx, tolls, cTick }
     // Per-tick memo: planCtx is fixed for the tick, and route/auction/rebalance/explore all
     // re-query the same (a,b) pairs many times (bestInsert is O(n²) in dist calls). Keyed
@@ -181,7 +183,7 @@ export class BdiLoop {
     }
 
     // candidates
-    const carried = beliefs.self.carrying.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
+    const carried = selfCarried // self's carried bundle, already resolved above for §7.1 c_tick
     const cm = this.mission ? this.mission.view.countShaper() : M1
     const cg = this.mission ? this.mission.view.zoneShaper() : G1
     // §7.2: the team-wide absolute filter (identity F1 unless a HARD_CONSTRAINT mission is active).
