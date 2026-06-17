@@ -8,7 +8,7 @@ import type { Claim } from '../src/coordination/claims.js'
 
 const CONSTS: GameConsts = { CLOCK: 50, MOVEMENT_DURATION: 50, OBS_DISTANCE: 5, PARCEL_DECAY_TICKS: 20, PARCEL_DECAY_RAW: '1s', PENALTY: 0 }
 const dc = decayConsts(CONSTS)
-const manhattan = (a: Pos, b: Pos): number => Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
+const manhattan = (a: Pos, b: Pos): { L: number; toll: number } => ({ L: Math.abs(a.x - b.x) + Math.abs(a.y - b.y), toll: 0 })
 const parcel = (id: string, x: number): ParcelBelief => ({ id, pos: { x, y: 0 }, rewardSeen: 10, carriedBy: null, lastSeen: 0 })
 const claim = (parcelId: string, agentId: 'liaison' | 'courier', originD: number): Claim => ({ parcelId, agentId, origin: 'AUCTION', epoch: 0, commitTick: 0, originD, lastD: originD, lastProgressTick: 0 })
 const zones: Pos[] = [{ x: 0, y: 0 }]

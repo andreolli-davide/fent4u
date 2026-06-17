@@ -74,14 +74,15 @@ export class BdiLoop {
     // Per-tick memo: ctx is fixed for the tick, and route/auction/rebalance/explore all
     // re-query the same (a,b) pairs many times (bestInsert is O(n²) in dist calls). Keyed
     // by ordered (a,b) — planPath is directional (push asymmetry, tolls), so never symmetric.
-    const distMemo = new Map<string, number>()
-    const dist = (a: Pos, b: Pos): number => {
+    const distMemo = new Map<string, { L: number; toll: number }>()
+    const dist = (a: Pos, b: Pos): { L: number; toll: number } => {
       const k = `${a.x},${a.y}|${b.x},${b.y}`
       const hit = distMemo.get(k)
       if (hit !== undefined) return hit
-      const L = planPath(this.grid, ctx, a, b).L
-      distMemo.set(k, L)
-      return L
+      const r = planPath(this.grid, ctx, a, b)
+      const v = { L: r.L, toll: r.tollSum }
+      distMemo.set(k, v)
+      return v
     }
 
     // §9.7: coordination (auction/rebalance/pool) must read SHARED state only. The only
@@ -94,7 +95,7 @@ export class BdiLoop {
     // 1. liveness: expire own stuck claims (distOf reads live d from this agent)
     const dropped = this.claims.expire(tnow, (c) => {
       const p = beliefs.parcels.get(c.parcelId)
-      return p ? dist(self, p.pos) : Infinity
+      return p ? dist(self, p.pos).L : Infinity
     }, this.params.claim_ttl, this.client.role)
     for (const c of dropped) this.broadcast({ kind: 'release', parcelId: c.parcelId, epoch: tnow })
 
@@ -144,7 +145,7 @@ export class BdiLoop {
         if (winner !== me && !partnerLive) continue
         const p = beliefs.parcels.get(parcelId)! // safe: pool ⊆ beliefs.parcels, parcels not mutated between buildPool and here
         const winnerPos = winner === me ? sharedSelf : partnerSnap.pos
-        const d = dist(winnerPos, p.pos)
+        const d = dist(winnerPos, p.pos).L
         const claim: Claim = { parcelId, agentId: winner, origin: 'AUCTION', epoch: tnow, commitTick: tnow, originD: d, lastD: d, lastProgressTick: tnow }
         this.claims.add(claim)
         this.broadcast({ kind: 'claim', claim })
@@ -202,12 +203,13 @@ export class BdiLoop {
       partnerTarget = pRoute?.pickups[0]?.pos ?? partner?.pos ?? null
     }
     const dRef = this.grid.w + this.grid.h
-    const ex = chooseExplore(this.spawners, this.seenAt, self, tnow, dist, this.params, partnerTarget, dRef)
+    const distL = (a: Pos, b: Pos): number => dist(a, b).L
+    const ex = chooseExplore(this.spawners, this.seenAt, self, tnow, distL, this.params, partnerTarget, dRef)
     if (ex !== null) cands.push(ex)
     if (this.mission?.pursue) {
       const m = this.mission.view.current()
       if (m !== null) {
-        const mc = uMission(m, self, dist, tnow, this.rateTracker.rhoRef(), this.params)
+        const mc = uMission(m, self, distL, tnow, this.rateTracker.rhoRef(), this.params)
         if (mc !== null) cands.push(mc)
       }
     }
@@ -243,7 +245,7 @@ export class BdiLoop {
   }
 
   /** Pickable parcels with P_avail>0, plus the per-parcel P_avail used to weight route value (§5.5). */
-  private buildPool(beliefs: BeliefBase, self: Pos, tnow: number, dist: (a: Pos, b: Pos) => number): { pool: ParcelBelief[]; weight: Map<string, number> } {
+  private buildPool(beliefs: BeliefBase, self: Pos, tnow: number, dist: (a: Pos, b: Pos) => { L: number; toll: number }): { pool: ParcelBelief[]; weight: Map<string, number> } {
     const enemies = [...beliefs.agents.values()].filter((a) => a.rel === 'enemy')
     const pool: ParcelBelief[] = []
     const weight = new Map<string, number>()
@@ -252,9 +254,9 @@ export class BdiLoop {
       if (p.carriedBy !== null) continue
       if (partnerClaimed.has(p.id)) continue // §9.4: partner-claimed ⇒ P_avail = 0 for me
       if (this.claims.claimedBy(p.id) === this.client.role) continue // own claim already committed — exclude from pool to prevent re-auction resetting originD
-      const dSelfP = dist(self, p.pos)
+      const dSelfP = dist(self, p.pos).L
       if (!Number.isFinite(dSelfP)) continue
-      const threats: EnemyThreat[] = enemies.map((e) => ({ age: tnow - e.lastSeen, dToP: dist(e.pos, p.pos) }))
+      const threats: EnemyThreat[] = enemies.map((e) => ({ age: tnow - e.lastSeen, dToP: dist(e.pos, p.pos).L }))
       const pa = pAvail(p, dSelfP, threats, this.params.beta_comp, tnow, this.dc)
       if (pa > 0) { pool.push(p); weight.set(p.id, pa) }
     }

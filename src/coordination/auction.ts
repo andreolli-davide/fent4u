@@ -23,7 +23,7 @@ export interface AuctionInput {
   agents: [AgentSnap, AgentSnap]
   enemies: AgentBelief[]
   zones: Pos[]
-  dist: (a: Pos, b: Pos) => number
+  dist: (a: Pos, b: Pos) => { L: number; toll: number }
   dc: DecayConsts
   params: Params
   tnow: number
@@ -35,8 +35,8 @@ export interface AuctionInput {
 function weightFor(agent: AgentSnap, enemies: AgentBelief[], dist: AuctionInput['dist'], dc: DecayConsts, params: Params, tnow: number): ParcelWeight {
   return (p: ParcelBelief): number => {
     if (p.carriedBy !== null) return 0
-    const threats: EnemyThreat[] = enemies.map((e) => ({ age: tnow - e.lastSeen, dToP: dist(e.pos, p.pos) }))
-    return pAvail(p, dist(agent.pos, p.pos), threats, params.beta_comp, tnow, dc)
+    const threats: EnemyThreat[] = enemies.map((e) => ({ age: tnow - e.lastSeen, dToP: dist(e.pos, p.pos).L }))
+    return pAvail(p, dist(agent.pos, p.pos).L, threats, params.beta_comp, tnow, dc)
   }
 }
 
