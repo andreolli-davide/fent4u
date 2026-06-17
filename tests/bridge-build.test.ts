@@ -62,3 +62,16 @@ test('buildContract uses an explicit mission deadline when present', () => {
 test('buildContract returns null for an unknown contractType', () => {
   expect(buildContract(coord('NONSENSE'), grid(), ctx())).toBeNull()
 })
+
+test('buildContract SYNC_GATE binds a staging zone and no locks', () => {
+  const c = buildContract(coord('SYNC_GATE'), grid(), ctx())!
+  expect(c.type).toBe('SYNC_GATE')
+  expect(c.id).toBe('m1:SYNC_GATE')
+  expect(c.lockParcels).toBeUndefined()
+  expect(c.steps.some((s) => s.kind === 'BARRIER')).toBe(true)
+})
+
+test('buildContract SYNC_GATE returns null with no target (no TEXT_BOUND, no zones)', () => {
+  const emptyGrid: Grid = { w: 6, h: 3, tiles: new Map(), deliveryZones: [] }
+  expect(buildContract(coord('SYNC_GATE'), emptyGrid, ctx())).toBeNull()
+})
