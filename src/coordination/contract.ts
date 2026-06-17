@@ -150,3 +150,29 @@ export class ContractRuntime {
     }
   }
 }
+
+// §8.4 RENDEZVOUS: both parties reach within `radius` of `target` (different tiles — agents can
+// never share a tile), each posts its readiness, the single barrier releases when both have.
+// Roles are symmetric here, so no runtime bid is needed (cf. §8.3 handoff, follow-on plan).
+export function rendezvousContract(
+  id: string,
+  target: Pos,
+  radius: number,
+  payoff: number,
+  deadline: number,
+): Contract {
+  const goal = { kind: 'IN_ZONE' as const, center: target, radius }
+  return {
+    id,
+    type: 'RENDEZVOUS',
+    steps: [
+      { kind: 'LOCAL', agent: 'liaison', goal, post: 'liaison_ready' },
+      { kind: 'LOCAL', agent: 'courier', goal, post: 'courier_ready' },
+      { kind: 'BARRIER', needs: ['liaison_ready', 'courier_ready'] },
+    ],
+    posted: {},
+    payoff,
+    deadline,
+    status: 'PROPOSED',
+  }
+}
