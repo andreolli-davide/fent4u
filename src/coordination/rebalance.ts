@@ -9,7 +9,7 @@ import type { Params } from '../bdi/params.js'
 import type { AgentId } from '../types/a2a.js'
 import type { Claim } from './claims.js'
 import { routeFromClaims, uRoute } from '../bdi/route.js'
-import { pAvail, type DecayConsts, type EnemyThreat, type ParcelWeight } from '../bdi/utility.js'
+import { pAvail, type DecayConsts, type EnemyThreat, type ParcelWeight, type Dist } from '../bdi/utility.js'
 
 export interface RebalanceAgent {
   id: AgentId
@@ -23,7 +23,7 @@ export interface RebalanceInput {
   claims: Claim[] // current AUCTION claims (for originD / sunk travel)
   enemies: AgentBelief[]
   zones: Pos[]
-  dist: (a: Pos, b: Pos) => { L: number; toll: number }
+  dist: Dist
   dc: DecayConsts
   params: Params
   tnow: number

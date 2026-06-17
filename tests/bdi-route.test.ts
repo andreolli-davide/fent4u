@@ -96,9 +96,8 @@ test('buildRoute routes to a g=5 zone over a nearer identity zone (§6.0)', () =
 
 test('Dist tolls flow into Route.toll and reduce uRoute (§7.1)', () => {
   const held = parcel('held', 0, 0, 30) // already at the delivery zone (0,0)
-  const noToll = (a: Pos, b: Pos): { L: number; toll: number } => ({ L: manhattan(a, b), toll: 0 })
   const withToll = (a: Pos, b: Pos): { L: number; toll: number } => ({ L: manhattan(a, b), toll: b.x === 0 && b.y === 0 ? 40 : 0 })
-  const r0 = buildRoute([held], [], { x: 3, y: 0 }, zones, 0, dc, DEFAULT_PARAMS, noToll)!
+  const r0 = buildRoute([held], [], { x: 3, y: 0 }, zones, 0, dc, DEFAULT_PARAMS, md)!
   const r1 = buildRoute([held], [], { x: 3, y: 0 }, zones, 0, dc, DEFAULT_PARAMS, withToll)!
   expect(r0.toll).toBe(0)
   expect(r1.toll).toBe(40)
