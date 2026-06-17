@@ -74,7 +74,7 @@ test('messages for a different contract id are ignored', () => {
   expect(rt.current()!.posted.liaison_ready).toBeUndefined()
 })
 
-import { rendezvousContract } from '../src/coordination/contract.js'
+import { rendezvousContract, advance } from '../src/coordination/contract.js'
 
 test('rendezvousContract builds the two-LOCAL + barrier template', () => {
   const c = rendezvousContract('r1', { x: 5, y: 5 }, 3, 500, 1000)
@@ -89,4 +89,69 @@ test('rendezvousContract builds the two-LOCAL + barrier template', () => {
     { kind: 'LOCAL', agent: 'courier', goal: { kind: 'IN_ZONE', center: { x: 5, y: 5 }, radius: 3 }, post: 'courier_ready' },
     { kind: 'BARRIER', needs: ['liaison_ready', 'courier_ready'] },
   ])
+})
+
+// A hand-built ACTIVE handoff-shaped contract for the advance() walk-through (no map / builder
+// needed — Task 1 must go green before handoffContract exists). The shape matches what Task 2's
+// handoffContract() will produce, exercised there.
+function handoffSteps(): Contract {
+  return {
+    id: 'h1', type: 'HANDOFF', payoff: 200, deadline: 9999, status: 'ACTIVE', posted: {},
+    lockOwner: 'liaison', lockParcels: ['p1'],
+    steps: [
+      { kind: 'ACTION', agent: 'liaison', primitive: 'pickUp', ids: ['p1'], at: { x: 2, y: 1 }, post: 'picked' },
+      { kind: 'ACTION', agent: 'liaison', primitive: 'putDown', ids: ['p1'], at: { x: 1, y: 0 }, post: 'dropped', onDelivery: false },
+      { kind: 'LOCAL', agent: 'liaison', goal: { kind: 'AT_TILE', tile: { x: 1, y: 1 } }, post: 'H_clear' },
+      { kind: 'LOCAL', agent: 'courier', goal: { kind: 'AT_TILE', tile: { x: 2, y: 0 } }, post: 'b_ready' },
+      { kind: 'BARRIER', needs: ['H_clear', 'b_ready'] },
+      { kind: 'ACTION', agent: 'courier', primitive: 'pickUp', ids: ['p1'], at: { x: 1, y: 0 }, post: 'b_picked' },
+      { kind: 'ACTION', agent: 'courier', primitive: 'putDown', ids: ['p1'], at: { x: 0, y: 0 }, post: 'delivered', onDelivery: true },
+    ],
+  }
+}
+
+test('advance: picker picks up at the parcel tile, then drops at the drop tile', () => {
+  const c = handoffSteps()
+  // picker (liaison) standing on the parcel tile → pickUp with explicit ids
+  expect(advance(c, 'liaison', { x: 2, y: 1 })).toEqual({ kind: 'pickup', ids: ['p1'], post: 'picked' })
+  c.posted.picked = true
+  // not yet at the drop tile → navigate to it
+  expect(advance(c, 'liaison', { x: 2, y: 1 })).toEqual({ kind: 'navigate', to: { x: 1, y: 0 } })
+  // on the drop tile → putDown (non-scoring ground drop)
+  expect(advance(c, 'liaison', { x: 1, y: 0 })).toEqual({ kind: 'putdown', ids: ['p1'], post: 'dropped', onDelivery: false })
+})
+
+test('advance: picker blocks at the barrier after vacating until the deliverer is ready', () => {
+  const c = handoffSteps()
+  c.posted.picked = true
+  c.posted.dropped = true
+  // picker on the vacate tile → posts H_clear
+  expect(advance(c, 'liaison', { x: 1, y: 1 })).toEqual({ kind: 'post', milestone: 'H_clear' })
+  c.posted.H_clear = true
+  // H_clear posted but b_ready not → picker hits the barrier and blocks
+  expect(advance(c, 'liaison', { x: 1, y: 1 })).toEqual({ kind: 'block' })
+})
+
+test('advance: contract is done only after the deliverer posts delivered (not when the picker runs out of steps)', () => {
+  const c = handoffSteps()
+  c.posted.picked = true
+  c.posted.dropped = true
+  c.posted.H_clear = true
+  c.posted.b_ready = true   // barrier released
+  // picker has no steps after the barrier, but the deliverer has not delivered → block, NOT done
+  expect(advance(c, 'liaison', { x: 1, y: 1 })).toEqual({ kind: 'block' })
+  // deliverer finishes
+  c.posted.b_picked = true
+  c.posted.delivered = true
+  // now every non-barrier milestone is posted → done for both
+  expect(advance(c, 'liaison', { x: 1, y: 1 })).toEqual({ kind: 'done' })
+  expect(advance(c, 'courier', { x: 0, y: 0 })).toEqual({ kind: 'done' })
+})
+
+test('advance: deliverer scoring putDown carries onDelivery:true', () => {
+  const c = handoffSteps()
+  c.posted.picked = true; c.posted.dropped = true; c.posted.H_clear = true
+  c.posted.b_ready = true; c.posted.b_picked = true
+  // deliverer on the delivery tile → scoring putDown
+  expect(advance(c, 'courier', { x: 0, y: 0 })).toEqual({ kind: 'putdown', ids: ['p1'], post: 'delivered', onDelivery: true })
 })
