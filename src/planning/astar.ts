@@ -159,12 +159,13 @@ interface Node {
   seq: number // insertion order — final, deterministic tie-break (§9)
 }
 
-// Heap order: lower f wins; ties prefer the deeper node (larger g ⇒ smaller h,
-// fewer expansions); remaining ties broken by insertion order for determinism.
-// In toll mode f = cost + h so the heap still correctly orders by total estimated cost.
+// Heap order: lower f wins; ties prefer the node with larger cost (deeper / closer
+// to goal in cost terms, so smaller remaining h); remaining ties broken by insertion
+// order for determinism. In pure-tick mode cost === g, so behaviour is identical to
+// before; in toll mode this stays coherent (prefer the node with more sunk cost).
 function before(a: Node, b: Node): boolean {
   if (a.f !== b.f) return a.f < b.f
-  if (a.g !== b.g) return a.g > b.g
+  if (a.cost !== b.cost) return a.cost > b.cost
   return a.seq < b.seq
 }
 
@@ -214,6 +215,9 @@ export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResu
 
   const tolls = ctx.tolls
   const tollMode = tolls !== undefined && tolls.size > 0
+  // cTick must be > 0: derived as ρ·|carried| + ū_forgone (always positive, §7.1).
+  // The `?? 1` is a defensive positive default — an omitted exchange rate must not
+  // collapse all step costs to 0, which would allow an unbounded toll-dodging detour.
   const cTick = tollMode ? (ctx.cTick ?? 1) : 1
   const tollOf = (k: string): number => (tollMode ? (tolls!.get(k) ?? 0) : 0)
 
@@ -240,6 +244,9 @@ export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResu
         const cratePos = { x: from.x + d0.dx, y: from.y + d0.dy }
         pushes.push({ crateId: fp.crateId, from: cratePos, to: { x: cratePos.x + d0.dx, y: cratePos.y + d0.dy }, tickOffset: 0 })
       }
+      // L is the tick length of the COST-optimal path; among cost-tied paths the
+      // deterministic first-settled representative wins (bestCost + seq), so L is
+      // cost-optimal and deterministic but not guaranteed step-minimal among cost-ties.
       return { reachable: true, L: cur.g, firstStep: cur.firstStep, pushes, timedOut: false, tollSum: cur.tollAccum }
     }
 
