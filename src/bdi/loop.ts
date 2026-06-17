@@ -321,6 +321,7 @@ export class BdiLoop {
       try {
         if (action.kind === 'pickup') {
           await this.client.pickup()
+          for (const id of action.ids) beliefs.ensureParcel(id, self, tnow)
           beliefs.applyPickup(action.ids)
         } else {
           await this.client.putdown(action.ids)

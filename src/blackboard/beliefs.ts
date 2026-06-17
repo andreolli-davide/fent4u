@@ -195,6 +195,22 @@ export class BeliefBase {
     this.recomputeCarrying()
   }
 
+  /**
+   * Ensure a (possibly never-perceived) parcel exists as a belief, so a contract pickUp of it
+   * (§8.3 handoff deliverer) records carriage instead of silently no-opping when the parcel was
+   * never in this agent's OBS range. rewardSeen=0: the deliverer never saw the parcel's value,
+   * and the active contract short-circuits base-play valuation (§9 selector) while it owns the
+   * agent, so a 0 reward cannot corrupt a route decision; on the delivery putDown the belief is
+   * removed. Idempotent — a no-op if the parcel is already known (perception wins).
+   */
+  ensureParcel(id: string, pos: Pos, tnow: number): void {
+    if (!this.parcels.has(id)) {
+      this.parcels.set(id, { id, pos, rewardSeen: 0, carriedBy: null, lastSeen: tnow })
+      this.dirtyParcels.add(id)
+      this.removedParcels.delete(id)
+    }
+  }
+
   applyPickup(ids: string[]): void {
     for (const id of ids) {
       const p = this.parcels.get(id)
