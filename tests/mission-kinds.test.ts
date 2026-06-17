@@ -36,3 +36,11 @@ test('isMission accepts an assembled mission and rejects a bare draft / garbage'
   expect(isMission({ ...m, id: 42 })).toBe(false)
 })
 
+test('isMissionDraft accepts a HARD_CONSTRAINT draft carrying priced + absolute params', () => {
+  const draft = {
+    kind: 'HARD_CONSTRAINT', payoff: -50, abstractIntent: 'avoid (5,2); no big parcels', sub: 'PRICED',
+    params: { priced: [{ tile: { tag: 'TEXT_BOUND', x: 5, y: 2 }, toll: 50 }], absolute: { kind: 'REWARD_THRESHOLD', max: 10 } },
+  }
+  expect(isMissionDraft(draft)).toBe(true)
+})
+
