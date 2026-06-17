@@ -5,6 +5,7 @@ import { DEFAULT_PARAMS } from '../src/bdi/params.js'
 import { TeamMissionView } from '../src/mission/view.js'
 import { ContractRuntime } from '../src/coordination/contract.js'
 import type { ContractMsg } from '../src/coordination/contract.js'
+import { syncGateContract, advance } from '../src/coordination/contract.js'
 import type { Mission } from '../src/mission/kinds.js'
 import type { DeliverooClient } from '../src/external/deliveroo.js'
 import type { GameConsts, Tile, Pos, PerceptionSnapshot, PickResult } from '../src/types/perception.js'
@@ -83,4 +84,42 @@ test('Courier (pursue:false) never proposes a contract', async () => {
     { partner: 'liaison', send: (m) => sent.push(m) }, { view, pursue: false, contracts: rt })
   await loop.tick(snap({ x: 1, y: 0 }))
   expect(sent.filter((m) => m.type === 'contract').length).toBe(0)
+})
+
+// Build an ACTIVE, fully-staged SYNC_GATE so advance() yields 'gated'.
+function gatedRuntime(): ContractRuntime {
+  const rt = new ContractRuntime()
+  rt.applyMsg({ kind: 'propose', contract: syncGateContract('g1', { x: 0, y: 0 }, 9, 700, 9999) }, 'liaison')
+  rt.applyMsg({ kind: 'post', id: 'g1', milestone: 'l_staged' }, 'liaison')
+  rt.applyMsg({ kind: 'post', id: 'g1', milestone: 'c_staged' }, 'liaison')
+  return rt
+}
+
+// A move-recording client so we can see whether base play moved this tick.
+function recClient(role: 'liaison' | 'courier'): { client: DeliverooClient; moves: string[] } {
+  const moves: string[] = []
+  const client = { ...fakeClient(role), move: async (d: string) => { moves.push(d); return { x: 0, y: 0 } as Pos } } as DeliverooClient
+  return { client, moves }
+}
+
+test('gated + CLOSED gate: agent holds (no base-play move)', async () => {
+  const rt = gatedRuntime(); rt.setGate('CLOSED', 1)
+  const { client, moves } = recClient('liaison')
+  const view = new TeamMissionView()
+  const loop = new BdiLoop(client, DEFAULT_PARAMS, log, undefined, { partner: 'courier', send: () => {} }, { view, pursue: true, contracts: rt })
+  // parcel present, so base play WOULD move toward it if not gated.
+  await loop.tick(snap({ x: 3, y: 0 }))
+  expect(moves).toEqual([])
+  expect(advance(rt.active()!, 'liaison', { x: 3, y: 0 })).toEqual({ kind: 'gated' })
+})
+
+test('SYNC_GATE aborts on partner loss (Active→Failed) and broadcasts a FAILED teardown', async () => {
+  const rt = gatedRuntime()
+  const sent: A2AMessage[] = []
+  const { client } = recClient('liaison')
+  const loop = new BdiLoop(client, DEFAULT_PARAMS, log, undefined, { partner: 'courier', send: (m) => sent.push(m) }, { view: new TeamMissionView(), pursue: true, contracts: rt })
+  await loop.tick(snap({ x: 3, y: 0 }), false) // partnerAlive = false
+  const tear = sent.filter((m) => m.type === 'contract').map((m) => m.payload as ContractMsg)
+  expect(tear).toEqual([{ kind: 'teardown', id: 'g1', status: 'FAILED' }])
+  expect(rt.current()).toBeNull()
 })

@@ -141,10 +141,31 @@ export class BdiLoop {
     // returns before the auction/argmax so a contracted agent does no base-play allocation.
     const activeContract = this.mission?.contracts?.active() ?? null
     if (activeContract !== null) {
-      await this.actContract(activeContract, beliefs, planCtx, tnow)
-      this.prevSelf = self
-      this.log.debug({ durationMs: performance.now() - t0, tick: tnow, contract: activeContract.id }, 'tick (contract)')
-      return
+      // §8.5 — a SYNC_GATE has no terminal barrier; a lost partner would freeze the survivor on a
+      // stale gate forever. Partner-loss aborts it (Active→Failed), clears the gate, resumes base play.
+      if (activeContract.type === 'SYNC_GATE' && !partnerAlive) {
+        const msg = this.mission!.contracts!.fail()
+        if (msg !== null) this.sendContract(msg)
+        this.log.info({ tick: tnow, contract: activeContract.id, status: 'FAILED' }, 'sync-gate partner lost')
+        // fall through to base play below (slot now empty, gate disarmed)
+      } else {
+        const action = advance(activeContract, this.client.role, self)
+        if (action.kind === 'gated') {
+          // §8.5 movement overlay: past staging, base play resumes — but only through an OPEN+fresh
+          // gate (stale ⇒ CLOSED). A held tick takes no action; an open tick falls through to base play.
+          if (!this.mission!.contracts!.gateOpen(tnow)) {
+            this.prevSelf = self
+            this.log.debug({ tick: tnow, contract: activeContract.id, gate: 'CLOSED' }, 'tick (gate held)')
+            return
+          }
+          // gate OPEN+fresh → fall through to base play below
+        } else {
+          await this.actContract(activeContract, beliefs, planCtx, tnow)
+          this.prevSelf = self
+          this.log.debug({ durationMs: performance.now() - t0, tick: tnow, contract: activeContract.id }, 'tick (contract)')
+          return
+        }
+      }
     }
 
     // §9.7: coordination (auction/rebalance/pool) must read SHARED state only. The only
