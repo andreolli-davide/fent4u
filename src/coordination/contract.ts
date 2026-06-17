@@ -121,6 +121,21 @@ export function isContractMsg(p: unknown): p is ContractMsg {
   }
 }
 
+// §8.5 close-latency guard: an OPEN gate older than this many ticks reads CLOSED (fail-safe to STOP
+// under uncertainty — a late "red" must never license a move). Carried on the dedicated 'gate' channel.
+export const GATE_STALE_TTL = 5
+
+// The gate sub-protocol on the `type:'gate'` a2a channel (separate from 'contract'). `tick` is the
+// heartbeat stamp the freshness check reads. Externally originated (server red/green); this slice
+// routes + applies it, the live source is a follow-on seam.
+export type GateMsg = { id: string; state: 'OPEN' | 'CLOSED'; tick: number }
+
+export function isGateMsg(p: unknown): p is GateMsg {
+  if (typeof p !== 'object' || p === null) return false
+  const m = p as Record<string, unknown>
+  return typeof m.id === 'string' && (m.state === 'OPEN' || m.state === 'CLOSED') && typeof m.tick === 'number'
+}
+
 // Owns the single active contract for ONE agent (mirrors MissionSlot's single-slot rule, §4.3)
 // and applies the `'contract'` a2a sub-protocol. Both replicas converge because the full
 // contract ships in `propose` and every milestone is replicated via `post` (§8.1). This slice
@@ -128,12 +143,21 @@ export function isContractMsg(p: unknown): p is ContractMsg {
 export class ContractRuntime {
   private c: Contract | null = null
 
+  // §8.5 gate flag — lifetime = the active SYNC_GATE contract. Default OPEN so it is inert outside a
+  // SYNC_GATE (gate scoping: callers only consult gateOpen() while a SYNC_GATE contract is ACTIVE).
+  private gate: { state: 'OPEN' | 'CLOSED'; heartbeat: number } = { state: 'OPEN', heartbeat: 0 }
+
+  // heartbeat: 0 is the "never-stamped" sentinel — gateOpen() treats it as perpetually fresh so the
+  // gate is inert (always OPEN) until the first explicit setGate/applyGate stamp arrives.
+  private resetGate(): void { this.gate = { state: 'OPEN', heartbeat: 0 } }
+
   current(): Contract | null { return this.c }
   active(): Contract | null { return this.c?.status === 'ACTIVE' ? this.c : null }
 
   // Liaison side: install PROPOSED and return the msg to broadcast. Goes ACTIVE on the accept.
   propose(contract: Contract): ContractMsg {
     this.c = { ...contract, status: 'PROPOSED' }
+    this.resetGate()
     return { kind: 'propose', contract: this.c }
   }
 
@@ -150,7 +174,41 @@ export class ContractRuntime {
     const id = this.c.id
     this.c.status = 'SATISFIED'
     this.c = null
+    this.resetGate()
     return { kind: 'teardown', id, status: 'SATISFIED' }
+  }
+
+  // OPEN and fresh (§8.5): a stale heartbeat reads CLOSED. heartbeat===0 is the "never-stamped"
+  // sentinel (set by resetGate) — treated as perpetually fresh so the gate is inert until armed.
+  // Callers arm this only under a live SYNC_GATE.
+  gateOpen(now: number): boolean {
+    if (this.gate.state !== 'OPEN') return false
+    if (this.gate.heartbeat === 0) return true  // sentinel: not yet stamped → always fresh
+    return now - this.gate.heartbeat <= GATE_STALE_TTL
+  }
+
+  // Origination (Liaison): set the gate locally and return the msg to broadcast on the 'gate' channel.
+  setGate(state: 'OPEN' | 'CLOSED', tick: number): GateMsg | null {
+    if (this.c === null) return null
+    this.gate = { state, heartbeat: tick }
+    return { id: this.c.id, state, tick }
+  }
+
+  // Replication: apply an inbound gate msg for THIS contract, monotonic in tick (a late stamp is dropped).
+  applyGate(msg: GateMsg): void {
+    if (this.c !== null && this.c.id === msg.id && msg.tick >= this.gate.heartbeat) {
+      this.gate = { state: msg.state, heartbeat: msg.tick }
+    }
+  }
+
+  // §8.5 partner-loss / barrier-deadline failure: mark FAILED, clear the slot, disarm the gate.
+  fail(): ContractMsg | null {
+    if (this.c === null) return null
+    const id = this.c.id
+    this.c.status = 'FAILED'
+    this.c = null
+    this.resetGate()
+    return { kind: 'teardown', id, status: 'FAILED' }
   }
 
   // Apply an inbound a2a msg; returns an optional reply for the caller to broadcast.
@@ -161,6 +219,7 @@ export class ContractRuntime {
         // Receiver (Courier) accepts immediately → ACTIVE. Adoption gating is the proposer's
         // responsibility (§8.6), deferred this slice, so acceptance is unconditional.
         this.c = { ...msg.contract, status: 'ACTIVE' }
+        this.resetGate()
         return { kind: 'accept', id: msg.contract.id }
       case 'accept':
         if (this.c !== null && this.c.id === msg.id) this.c.status = 'ACTIVE'
@@ -169,7 +228,7 @@ export class ContractRuntime {
         if (this.c !== null && this.c.id === msg.id) this.c.posted[msg.milestone] = true
         return null
       case 'teardown':
-        if (this.c !== null && this.c.id === msg.id) this.c = null
+        if (this.c !== null && this.c.id === msg.id) { this.c = null; this.resetGate() }
         return null
     }
   }
