@@ -3,7 +3,7 @@ import type { DeliverooClient } from '../external/deliveroo.js'
 import type { PerceptionSnapshot, Pos, Tile } from '../types/perception.js'
 import { BeliefBase, type ParcelBelief, type AgentBelief } from '../blackboard/beliefs.js'
 import { buildGrid, buildObstacles, planPath, isPushAdmissible, type Grid, type PlanCtx, type Dir } from '../planning/astar.js'
-import { decayConsts, pAvail, tileKey, M1, G1, W1, type DecayConsts, type EnemyThreat, type DistResult, type Dist } from './utility.js'
+import { decayConsts, pAvail, tileKey, rnow, M1, G1, W1, F1, type DecayConsts, type EnemyThreat, type DistResult, type Dist } from './utility.js'
 import { bestSubset } from '../mission/shapers.js'
 import { buildRoute, uRoute, routeFromClaims } from './route.js'
 import { select, chooseExplore, matches, type Intention, type Candidate } from './intentions.js'
@@ -71,7 +71,16 @@ export class BdiLoop {
     const tnow = snap.tick
     const self = beliefs.self.pos
     const ctx = this.planCtx(beliefs)
-    // Per-tick memo: ctx is fixed for the tick, and route/auction/rebalance/explore all
+    // §7.1: a toll-aware plan context. tolls() is empty unless a HARD_CONSTRAINT mission is
+    // active (then it prices the forbidden tiles); cTick is the per-tick opportunity cost of
+    // a detour = decay on what we already carry + the running mean reward/tick we forgo. With
+    // tolls empty, planPath stays pure-tick, so base play is byte-for-byte unchanged.
+    const mView = this.mission?.view
+    const tolls = mView ? mView.tolls() : new Map<string, number>()
+    const carriedNow = this.carriedOf(beliefs)
+    const cTick = this.dc.rho * carriedNow.filter((p) => rnow(p, tnow, this.dc) > 0).length + this.rateTracker.uForgone()
+    const planCtx = { ...ctx, tolls, cTick }
+    // Per-tick memo: planCtx is fixed for the tick, and route/auction/rebalance/explore all
     // re-query the same (a,b) pairs many times (bestInsert is O(n²) in dist calls). Keyed
     // by ordered (a,b) — planPath is directional (push asymmetry, tolls), so never symmetric.
     const distMemo = new Map<string, DistResult>()
@@ -79,7 +88,7 @@ export class BdiLoop {
       const k = `${a.x},${a.y}|${b.x},${b.y}`
       const hit = distMemo.get(k)
       if (hit !== undefined) return hit
-      const r = planPath(this.grid, ctx, a, b)
+      const r = planPath(this.grid, planCtx, a, b)
       const v = { L: r.L, toll: r.tollSum }
       distMemo.set(k, v)
       return v
@@ -175,6 +184,9 @@ export class BdiLoop {
     const carried = beliefs.self.carrying.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
     const cm = this.mission ? this.mission.view.countShaper() : M1
     const cg = this.mission ? this.mission.view.zoneShaper() : G1
+    // §7.2: the team-wide absolute filter (identity F1 unless a HARD_CONSTRAINT mission is active).
+    // Threaded into every route valuation so a forfeiting bundle/zone scores 0 and drops out.
+    const cf = this.mission ? this.mission.view.bundleFilter() : F1
     const { pool, weight } = this.buildPool(beliefs, self, tnow, dist)
     // Pickups weight their P_avail (survival × race); carried parcels are in hand ⇒ 1 (§5.5).
     const weightOf = (p: ParcelBelief): number => weight.get(p.id) ?? 1
@@ -187,18 +199,18 @@ export class BdiLoop {
     // leftover pool waits for the next tick). Solo (no partner channel): no auction runs, so
     // fall back to greedy buildRoute over the pool to still pursue visible parcels.
     const route = this.coord
-      ? routeFromClaims(carried, ownClaimed, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf, cm, cg)
+      ? routeFromClaims(carried, ownClaimed, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf, cm, cg, cf)
       : ownClaimed.length > 0 || carried.length > 0
-        ? routeFromClaims(carried, ownClaimed, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf, cm, cg)
-        : buildRoute(carried, pool, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf, cm, cg)
+        ? routeFromClaims(carried, ownClaimed, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf, cm, cg, cf)
+        : buildRoute(carried, pool, self, this.grid.deliveryZones, tnow, this.dc, this.params, dist, weightOf, cm, cg, cf)
     const cands: Candidate[] = []
-    if (route !== null) cands.push({ intention: { kind: 'route', route }, u: uRoute(route, tnow, this.dc, this.params, weightOf, cm, cg) })
+    if (route !== null) cands.push({ intention: { kind: 'route', route }, u: uRoute(route, tnow, this.dc, this.params, weightOf, cm, cg, cf) })
     let partnerTarget: Pos | null = null
     if (this.coord) {
       const partner = this.partnerBelief(beliefs)
       const pClaims = this.claimedParcels(beliefs, this.coord.partner)
       const pRoute = (partner !== null && pClaims.length > 0)
-        ? routeFromClaims(this.carriedOf(beliefs), pClaims, partner.pos, this.grid.deliveryZones, tnow, this.dc, this.params, dist, W1, cm, cg)
+        ? routeFromClaims(this.carriedOf(beliefs), pClaims, partner.pos, this.grid.deliveryZones, tnow, this.dc, this.params, dist, W1, cm, cg, cf)
         : null
       partnerTarget = pRoute?.pickups[0]?.pos ?? partner?.pos ?? null
     }
@@ -223,7 +235,7 @@ export class BdiLoop {
     this.committed = chosen
     this.committedU = chosenCand.u
 
-    await this.act(chosen, beliefs, ctx, tnow)
+    await this.act(chosen, beliefs, planCtx, tnow)
     this.prevSelf = self // recorded so that if blackboard.onTick ships self this tick, both replicas share the same value next tick
     this.log.debug({ durationMs: performance.now() - t0, tick: tnow }, 'tick')
   }
@@ -346,7 +358,9 @@ export class BdiLoop {
     const carried = beliefs.self.carrying.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
     const m = this.mission ? this.mission.view.countShaper() : M1
     const g = this.mission ? this.mission.view.zoneShaper() : G1
-    const bundle = bestSubset(carried, tile, tnow, this.dc, m, g, this.params.expiry_floor_ticks)
+    // §7.2: never assemble a forfeiting subset on a constrained delivery (identity F1 otherwise).
+    const cf = this.mission ? this.mission.view.bundleFilter() : F1
+    const bundle = bestSubset(carried, tile, tnow, this.dc, m, g, this.params.expiry_floor_ticks, cf)
     const ids = bundle.set.map((p) => p.id)
     if (ids.length === 0) return
     this.acting = true

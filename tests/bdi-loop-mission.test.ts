@@ -107,3 +107,45 @@ test('no mission: the same delivery ships all positive-Rnow parcels (base play)'
   expect(rec.putdowns).toHaveLength(1)
   expect(rec.putdowns[0]!.slice().sort()).toEqual(['a', 'b', 'c', 'd'])
 })
+
+// ── §7.1 priced toll: the agent dodges a forbidden tile on its delivery run ──────────────
+// 2 rows so a detour exists; delivery at (0,0). Self at (2,0) carrying one parcel.
+function dodgeMap(): Tile[] {
+  const tiles: Tile[] = [{ pos: { x: 0, y: 0 }, type: 'delivery' }]
+  for (let x = 1; x <= 2; x++) tiles.push({ pos: { x, y: 0 }, type: 'walkable' })
+  for (let x = 0; x <= 2; x++) tiles.push({ pos: { x, y: 1 }, type: 'walkable' })
+  return tiles
+}
+const dodgeSnap = (): PerceptionSnapshot => ({
+  tick: 1, self: { id: 'me', name: 'me', teamId: 'A', pos: { x: 2, y: 0 }, score: 0 },
+  parcels: [{ id: 'c', pos: { x: 2, y: 0 }, reward: 50, carriedBy: 'me' }],
+  agents: [], crates: [],
+})
+const tollMission = () => assembleMission(
+  { kind: 'HARD_CONSTRAINT', payoff: -100, abstractIntent: 'avoid (1,0)', sub: 'PRICED',
+    params: { priced: [{ tile: { tag: 'TEXT_BOUND', x: 1, y: 0 }, toll: 100 }] } },
+  'avoid', 'm-toll',
+)
+
+// §7 "on BOTH agents": Liaison (pursue:true) and Courier (pursue:false) both honour the toll.
+// Straight (2,0)->(1,0)->(0,0) crosses the 100-point tile (cost cTick·2 + 100); the detour up
+// through row y=1 is 4 ticks, no toll (cost cTick·4). cTick = ρ·1 + ū_forgone ≪ 50, so the
+// toll-aware A* skirts the tile — first step is 'up' to (2,1).
+test('both agents dodge a priced tile when delivering (§7.1, pursue:true/false)', async () => {
+  for (const role of ['liaison', 'courier'] as const) {
+    const rec = fakeClient(dodgeMap(), role)
+    const view = new TeamMissionView()
+    view.set(tollMission())
+    const loop = new BdiLoop(rec.client, DEFAULT_PARAMS, log, undefined, undefined, { view, pursue: role === 'liaison' })
+    await loop.tick(dodgeSnap())
+    expect(rec.moves[0]).toBe('up')
+  }
+})
+
+// Control: with NO mission, tolls is empty ⇒ pure-tick A* ⇒ straight delivery (base play).
+test('no constraint: the carried delivery goes straight through (1,0) (base play)', async () => {
+  const rec = fakeClient(dodgeMap(), 'liaison')
+  const loop = new BdiLoop(rec.client, DEFAULT_PARAMS, log)
+  await loop.tick(dodgeSnap())
+  expect(rec.moves[0]).toBe('left')
+})
