@@ -8,7 +8,7 @@ import type { Pos } from '../types/perception.js'
 import { posKey } from '../types/perception.js'
 import type { ParcelBelief } from '../blackboard/beliefs.js'
 import type { MissionParams } from './kinds.js'
-import { M1, G1, rnow, vValue, type CountShaper, type ZoneShaper, type DecayConsts } from '../bdi/utility.js'
+import { M1, G1, F1, rnow, vValue, type CountShaper, type ZoneShaper, type DecayConsts, type BundleFilter } from '../bdi/utility.js'
 
 /** count->factor over |putDown| (§6). Identity (M1) when absent or after filtering empties. */
 export function buildCountShaper(m: MissionParams['m']): CountShaper {
@@ -50,6 +50,7 @@ export function bestSubset(
   m: CountShaper,
   g: ZoneShaper,
   floorTicks: number,
+  filter: BundleFilter = F1,
 ): { set: ParcelBelief[]; value: number } {
   const positive = carried
     .map((p) => ({ p, r: rnow(p, tnow, dc) }))
@@ -58,13 +59,16 @@ export function bestSubset(
   if (positive.length === 0) return { set: [], value: 0 }
 
   const forced = positive.filter((x) => x.r - dc.rho * floorTicks <= 0).map((x) => x.p)
-  const optional = positive.filter((x) => x.r - dc.rho * floorTicks > 0).map((x) => x.p)
+  const optional = positive
+    .filter((x) => x.r - dc.rho * floorTicks > 0)
+    .filter((x) => filter([x.p], tile))
+    .map((x) => x.p)
 
   let best: { set: ParcelBelief[]; value: number } | null = null
   for (let j = 0; j <= optional.length; j++) {
     const set = [...forced, ...optional.slice(0, j)]
     if (set.length === 0) continue
-    const value = vValue(set, tile, 0, tnow, dc, m, g)
+    const value = vValue(set, tile, 0, tnow, dc, m, g, undefined, filter)
     if (best === null || value > best.value) best = { set, value }
   }
   return best!
