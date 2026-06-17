@@ -32,7 +32,7 @@ test('bindRoles makes the agent closer to the parcel the picker', () => {
   expect(r).toEqual({ picker: 'liaison', deliverer: 'courier' })
 })
 
-test('bindRoles breaks distance ties by agent id (liaison < courier)', () => {
+test('bindRoles breaks distance ties by the lower agent id (courier < liaison)', () => {
   const r = bindRoles({ x: 5, y: 0 }, { id: 'liaison', pos: { x: 4, y: 0 } }, { id: 'courier', pos: { x: 6, y: 0 } })
-  expect(r.picker).toBe('liaison')
+  expect(r.picker).toBe('courier')
 })

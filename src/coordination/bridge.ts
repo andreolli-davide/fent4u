@@ -31,6 +31,6 @@ export function selectHandoffParcel(
 export function bindRoles(parcel: Pos, a: AgentRef, b: AgentRef): { picker: AgentId; deliverer: AgentId } {
   const da = manhattan(a.pos, parcel)
   const db = manhattan(b.pos, parcel)
-  const aPicks = da < db || (da === db && a.id > b.id)
+  const aPicks = da < db || (da === db && a.id < b.id)
   return aPicks ? { picker: a.id, deliverer: b.id } : { picker: b.id, deliverer: a.id }
 }
