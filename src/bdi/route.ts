@@ -90,18 +90,37 @@ export function buildRoute(carried: ParcelBelief[], pool: ParcelBelief[], self: 
 }
 
 /**
- * §9.7 route derived from a committed claim set: order ALL of `claimed` by greedy
- * cheapest insertion and include every one (committed parcels are never dropped —
- * the auction already decided to take them). Null only when carrying nothing AND
- * no claim is reachable. Pass `claimed` pre-sorted by id for replica-determinism.
+ * §9.2/§9.7 route derived from a committed claim set. Like `buildRoute`, it folds in
+ * the claim whose cheapest insertion most raises `U_route`, *while it raises it*
+ * (the emergent horizon). A claim that would LOWER the rate — e.g. a far, low-value
+ * parcel against an already-valuable carried load — is NOT routed this cycle: it
+ * stays OWNED (still claimed) and is serviced after the current load is delivered.
+ *
+ * This cutoff is what makes the agent cycle collect→deliver instead of hoarding.
+ * Without it (the previous "include every claim" rule) the route always kept a
+ * pickup ahead of the single delivery, the auction backfilled claims as the agent
+ * made progress, and the agent never reached the deliver phase — collecting forever
+ * and scoring nothing. Deferring a claim is NOT dropping it (the claim is unchanged
+ * in the store, §9.7); CLAIM_TTL still recycles a claim that sees no progress.
+ *
+ * Deterministic (best-improvement each round; strict `>` ⇒ id-order tie-break on the
+ * caller-sorted `claimed`), so both replicas derive the identical route. Null only
+ * when carrying nothing AND no claim is reachable.
  */
 export function routeFromClaims(carried: ParcelBelief[], claimed: ParcelBelief[], self: Pos, zones: Pos[], tnow: number, dc: DecayConsts, params: Params, dist: Dist, weight: ParcelWeight = W1, m: CountShaper = M1, g: ZoneShaper = G1, filter: BundleFilter = F1): Route | null {
   if (carried.length === 0 && claimed.length === 0) return null
   let cur = score(self, carried, [], zones, tnow, dc, params, dist, weight, m, g, filter)
   if (cur === null) return null // no reachable zone
-  for (const p of claimed) {
-    const ins = bestInsert(self, carried, cur.route.pickups, p, zones, tnow, dc, params, dist, weight, m, g, filter)
-    if (ins !== null) cur = ins // unreachable insertion: skip; parcel stays claimed but unrouted this tick
+  const remaining = [...claimed]
+  for (;;) {
+    let bestAdd: { route: Route; u: number; idx: number } | null = null
+    for (let idx = 0; idx < remaining.length; idx++) {
+      const s = bestInsert(self, carried, cur.route.pickups, remaining[idx]!, zones, tnow, dc, params, dist, weight, m, g, filter)
+      if (s !== null && (bestAdd === null || s.u > bestAdd.u)) bestAdd = { ...s, idx }
+    }
+    if (bestAdd === null || bestAdd.u <= cur.u) break // emergent horizon: delivering the load beats collecting more
+    cur = { route: bestAdd.route, u: bestAdd.u }
+    remaining.splice(bestAdd.idx, 1)
   }
   return cur.route
 }

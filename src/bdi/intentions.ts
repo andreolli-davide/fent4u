@@ -84,7 +84,23 @@ export function chooseExplore(
     const dd = dist(self, s)
     if (!Number.isFinite(dd)) continue
     const lastSeen = seenAt.get(tileKey(s))
-    const staleness = lastSeen === undefined ? tnow : tnow - lastSeen
+    // §5.5: staleness is CAPPED. Uncapped, a long-unexplored region's info bonus grows
+    // without bound and makes explore out-rank a real collectible route (observed on hard
+    // maps where delivery cycles are long and route rate is low — agents wander and never
+    // collect: 26c1_7 scored 0 with explore U≈0.7 vs route U≈0.19). The cap keeps the
+    // staleness term a bounded DIRECTION signal ("go where info is old"), below real
+    // opportunities as §5.5 intends. Beyond the cap all old regions look equally stale, so
+    // the distance term picks the nearest (efficient nearest-frontier patrol).
+    const staleness = Math.min(params.explore_stale_cap, lastSeen === undefined ? tnow : tnow - lastSeen)
+    // Skip spawners currently in sensor view (markSeen reset them THIS tick ⇒
+    // staleness 0). There is no frontier to gain by "exploring" a tile we can already
+    // see, and the at-distance-0 spawner otherwise wins the argmax and freezes the
+    // agent camping on it (it re-arrives every tick, never patrols — observed on
+    // long-hallway maps: one agent visited 4 tiles in 45s and scored 0). Parcels that
+    // appear on a visible spawner are still collected via the ROUTE candidate, not
+    // explore; explore now seeks genuinely UNSEEN regions so the agent patrols. A
+    // never-seen spawner has staleness = tnow (large), so it is always kept.
+    if (staleness <= 0) continue
     const value = params.theta_explore * (1 + params.kappa_info * staleness)
     const u = rate(value, dd, params.alpha) + params.theta_disp * awayFromPartner(s, partnerTarget, dRef, dist)
     if (best === null || u > best.u) best = { target: { tile: s, staleness }, u }

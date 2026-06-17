@@ -22,6 +22,7 @@ export interface Params {
   rate_window: number        // retained reward/tick samples in DeliveryRateTracker
   rate_bootstrap: number     // delivery rate used before any sample exists
   expiry_floor_ticks: number // §6.2: force-deliver a carried parcel decaying to 0 within this many ticks
+  explore_stale_cap: number  // §5.5 cap on staleness in U_explore (ticks): keeps the info bonus a bounded DIRECTION signal, below real route opportunities, instead of growing unbounded and dominating collection
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -44,6 +45,7 @@ export const DEFAULT_PARAMS: Params = {
   rate_window: 20,
   rate_bootstrap: 0.5,
   expiry_floor_ticks: 3,
+  explore_stale_cap: 20,
 }
 
 type Range = [min: number, max: number]
@@ -67,6 +69,7 @@ const RANGES: Record<keyof Params, Range> = {
   rate_window: [1, 1000],
   rate_bootstrap: [0, 100],
   expiry_floor_ticks: [0, 100],
+  explore_stale_cap: [1, 100000],
 }
 
 export function loadParams(path = 'config/params.yaml'): Params {
