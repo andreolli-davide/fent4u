@@ -1,6 +1,7 @@
 // tests/bdi-utility-kernel.test.ts
 import { test, expect } from 'bun:test'
-import { decayConsts, vValue, bestZone, rate } from '../src/bdi/utility.js'
+import { decayConsts, vValue, bestZone, rate, F1 } from '../src/bdi/utility.js'
+import type { BundleFilter } from '../src/bdi/utility.js'
 import type { GameConsts, Pos } from '../src/types/perception.js'
 import type { ParcelBelief } from '../src/blackboard/beliefs.js'
 
@@ -20,11 +21,25 @@ test('bestZone prefers the nearer zone after en-route decay (§6.0 check)', () =
   // 3 parcels @10, rho=0.05. Zone A d=2; Zone B d=58. Decayed: A wins.
   const parcels = [p('a', 10), p('b', 10), p('c', 10)]
   const zones: Pos[] = [{ x: 2, y: 0 }, { x: 58, y: 0 }]
-  const dist = (_: Pos, z: Pos): number => z.x // distance == x for this fixture
+  const dist = (_: Pos, z: Pos): { L: number; toll: number } => ({ L: z.x, toll: 0 }) // distance == x for this fixture
   const z = bestZone(parcels, { x: 0, y: 0 }, zones, 0, dc, dist, 1.0)
   expect(z?.zone).toEqual({ x: 2, y: 0 })
 })
 
 test('rate = value / (L+1)^alpha', () => {
   expect(rate(20, 3, 1.0)).toBe(5) // 20/4
+})
+
+test('F1 filter leaves value unchanged (base play)', () => {
+  const dc = { rho: 0, lambda: 0, lambdaAgent: 0, decayIntervalTicks: Infinity }
+  const p = { id: 'p', pos: { x: 0, y: 0 }, rewardSeen: 20, carriedBy: null, lastSeen: 0 }
+  expect(vValue([p], { x: 1, y: 1 }, 0, 0, dc)).toBe(20)
+  expect(vValue([p], { x: 1, y: 1 }, 0, 0, dc, undefined, undefined, undefined, F1)).toBe(20)
+})
+
+test('a filter that rejects the bundle zeroes value', () => {
+  const dc = { rho: 0, lambda: 0, lambdaAgent: 0, decayIntervalTicks: Infinity }
+  const p = { id: 'p', pos: { x: 0, y: 0 }, rewardSeen: 20, carriedBy: null, lastSeen: 0 }
+  const reject: BundleFilter = () => false
+  expect(vValue([p], { x: 1, y: 1 }, 0, 0, dc, undefined, undefined, undefined, reject)).toBe(0)
 })

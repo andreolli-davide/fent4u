@@ -55,3 +55,18 @@ test('courier ingest installs a valid mission, clears on null, drops garbage', (
   ingest(view, null)
   expect(view.current()).toBeNull()
 })
+
+test('HARD_CONSTRAINT mission replicates: both views build identical tolls + filter', () => {
+  const m = assembleMission(
+    { kind: 'HARD_CONSTRAINT', payoff: -50, abstractIntent: 'avoid (5,2)', sub: 'PRICED',
+      params: { priced: [{ tile: { tag: 'TEXT_BOUND', x: 5, y: 2 }, toll: 50 }], absolute: { kind: 'REWARD_THRESHOLD', max: 10 } } },
+    'avoid', 'm-hc')
+  const wire = JSON.parse(JSON.stringify(m)) // a2a serialization round-trip
+  expect(isMission(wire)).toBe(true)
+  const vA = new TeamMissionView(); vA.set(m)
+  const vB = new TeamMissionView(); vB.set(wire)
+  expect([...vA.tolls()]).toEqual([...vB.tolls()])
+  const big = [{ id: 'b', pos: { x: 0, y: 0 }, rewardSeen: 20, carriedBy: null, lastSeen: 0 }]
+  expect(vA.bundleFilter()(big, { x: 0, y: 0 })).toBe(vB.bundleFilter()(big, { x: 0, y: 0 }))
+  expect(vB.bundleFilter()(big, { x: 0, y: 0 })).toBe(false) // REWARD_THRESHOLD max 10 voids a reward-20 bundle
+})

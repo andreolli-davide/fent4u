@@ -5,7 +5,7 @@ import type { Pos } from '../src/types/perception.js'
 import { assembleMission } from '../src/mission/kinds.js'
 
 const idle: Intention = { kind: 'idle' }
-const routeA: Intention = { kind: 'route', route: { pickups: [{ id: 'p1', pos: { x: 1, y: 0 }, rewardSeen: 10, carriedBy: null, lastSeen: 0 }], zone: { x: 0, y: 0 }, delivered: [], L: 2 } }
+const routeA: Intention = { kind: 'route', route: { pickups: [{ id: 'p1', pos: { x: 1, y: 0 }, rewardSeen: 10, carriedBy: null, lastSeen: 0 }], zone: { x: 0, y: 0 }, delivered: [], L: 2, toll: 0 } }
 const explore: Intention = { kind: 'explore', target: { tile: { x: 9, y: 9 }, staleness: 1 } }
 
 test('argmax picks the highest utility', () => {

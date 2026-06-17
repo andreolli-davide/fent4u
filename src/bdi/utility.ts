@@ -68,6 +68,10 @@ export type ZoneShaper = (z: Pos) => number
 export const M1: CountShaper = () => 1
 export const G1: ZoneShaper = () => 1
 
+/** Path-distance result: tick length L and Σ priced-tile toll along the chosen path (§7.1). */
+export interface DistResult { L: number; toll: number }
+export type Dist = (a: Pos, b: Pos) => DistResult
+
 /** Rate denominator (§5.5): value / (L+1)^alpha. */
 export function rate(value: number, L: number, alpha: number): number {
   return value / Math.pow(L + 1, alpha)
@@ -77,18 +81,24 @@ export function rate(value: number, L: number, alpha: number): number {
 export type ParcelWeight = (p: ParcelBelief) => number
 export const W1: ParcelWeight = () => 1
 
+/** §7.2 absolute constraint predicate over (bundle, delivery zone). true = valid. */
+export type BundleFilter = (S: ParcelBelief[], z: Pos) => boolean
+export const F1: BundleFilter = () => true
+
 /**
  * §5.4 delivery value kernel for a set delivered to zone z after L travel ticks.
  * `weight` discounts each parcel's contribution by its survival/race odds (§5.5):
  * carried parcels weight 1 (in hand), uncollected pickups weight their P_avail.
+ * `filter` is a §7.2 absolute constraint predicate; returns 0 if violated.
  */
-export function vValue(parcels: ParcelBelief[], z: Pos, L: number, tnow: number, dc: DecayConsts, m: CountShaper = M1, g: ZoneShaper = G1, weight: ParcelWeight = W1): number {
+export function vValue(parcels: ParcelBelief[], z: Pos, L: number, tnow: number, dc: DecayConsts, m: CountShaper = M1, g: ZoneShaper = G1, weight: ParcelWeight = W1, filter: BundleFilter = F1): number {
+  if (!filter(parcels, z)) return 0
   let sum = 0
   for (const p of parcels) sum += weight(p) * Math.max(0, rnow(p, tnow, dc) - dc.rho * L)
   return g(z) * m(parcels.length) * sum
 }
 
-export interface ZonePick { zone: Pos; L: number; rate: number }
+export interface ZonePick { zone: Pos; L: number; toll: number; rate: number }
 
 /**
  * §6.0 value-aware zone selection: argmax of the travel-decayed kernel rate.
@@ -96,13 +106,13 @@ export interface ZonePick { zone: Pos; L: number; rate: number }
  *   unreachable tiles. Infinite-distance zones are skipped; NaN distances are
  *   also skipped (coincidental, not guaranteed).
  */
-export function bestZone(parcels: ParcelBelief[], from: Pos, zones: Pos[], tnow: number, dc: DecayConsts, dist: (a: Pos, b: Pos) => number, alpha: number, m: CountShaper = M1, g: ZoneShaper = G1): ZonePick | null {
+export function bestZone(parcels: ParcelBelief[], from: Pos, zones: Pos[], tnow: number, dc: DecayConsts, dist: Dist, alpha: number, m: CountShaper = M1, g: ZoneShaper = G1, filter: BundleFilter = F1): ZonePick | null {
   let best: ZonePick | null = null
   for (const z of zones) {
-    const L = dist(from, z)
+    const { L, toll } = dist(from, z)
     if (!Number.isFinite(L)) continue
-    const r = rate(vValue(parcels, z, L, tnow, dc, m, g), L, alpha)
-    if (best === null || r > best.rate) best = { zone: z, L, rate: r }
+    const r = rate(vValue(parcels, z, L, tnow, dc, m, g, undefined, filter) - toll, L, alpha) // §7.1: net the path toll from realised value
+    if (best === null || r > best.rate) best = { zone: z, L, toll, rate: r }
   }
   return best
 }
