@@ -50,7 +50,7 @@ test('two loops complete a rendezvous through the a2a contract channel', async (
 
   // In-memory a2a buses: each agent's outbound contract msgs are applied to the OTHER's runtime.
   const inbox: Record<AgentId, A2AMessage[]> = { liaison: [], courier: [] }
-  const send = (m: A2AMessage): void => { inbox[m.to].push(m) }
+  const send = (m: A2AMessage): void => { inbox[m.to].push(structuredClone(m)) }
   // Drain a runtime's inbox, applying contract msgs and re-broadcasting any replies.
   function drain(rt: ContractRuntime, self: AgentId): void {
     for (const m of inbox[self].splice(0)) {
