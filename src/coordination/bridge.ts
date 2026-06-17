@@ -10,13 +10,6 @@ export interface AgentRef { id: AgentId; pos: Pos }
 
 const manhattan = (a: Pos, b: Pos): number => Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
 
-// Canonical agent ordering: liaison < courier (for deterministic tie-breaking in role binding)
-const agentOrder = (id: AgentId): number => {
-  if (id === 'liaison') return 0
-  if (id === 'courier') return 1
-  return 2 // fallback for other agents
-}
-
 // Highest-reward free (uncarried, unclaimed, reward>0) parcel; deterministic id tie-break so both
 // replicas would select identically (§9.3). null ⇒ nothing to hand off this tick.
 export function selectHandoffParcel(
@@ -38,6 +31,6 @@ export function selectHandoffParcel(
 export function bindRoles(parcel: Pos, a: AgentRef, b: AgentRef): { picker: AgentId; deliverer: AgentId } {
   const da = manhattan(a.pos, parcel)
   const db = manhattan(b.pos, parcel)
-  const aPicks = da < db || (da === db && agentOrder(a.id) < agentOrder(b.id))
+  const aPicks = da < db || (da === db && a.id > b.id)
   return aPicks ? { picker: a.id, deliverer: b.id } : { picker: b.id, deliverer: a.id }
 }
