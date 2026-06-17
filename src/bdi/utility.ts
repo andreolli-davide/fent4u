@@ -77,12 +77,18 @@ export function rate(value: number, L: number, alpha: number): number {
 export type ParcelWeight = (p: ParcelBelief) => number
 export const W1: ParcelWeight = () => 1
 
+/** §7.2 absolute constraint predicate over (bundle, delivery zone). true = valid. */
+export type BundleFilter = (S: ParcelBelief[], z: Pos) => boolean
+export const F1: BundleFilter = () => true
+
 /**
  * §5.4 delivery value kernel for a set delivered to zone z after L travel ticks.
  * `weight` discounts each parcel's contribution by its survival/race odds (§5.5):
  * carried parcels weight 1 (in hand), uncollected pickups weight their P_avail.
+ * `filter` is a §7.2 absolute constraint predicate; returns 0 if violated.
  */
-export function vValue(parcels: ParcelBelief[], z: Pos, L: number, tnow: number, dc: DecayConsts, m: CountShaper = M1, g: ZoneShaper = G1, weight: ParcelWeight = W1): number {
+export function vValue(parcels: ParcelBelief[], z: Pos, L: number, tnow: number, dc: DecayConsts, m: CountShaper = M1, g: ZoneShaper = G1, weight: ParcelWeight = W1, filter: BundleFilter = F1): number {
+  if (!filter(parcels, z)) return 0
   let sum = 0
   for (const p of parcels) sum += weight(p) * Math.max(0, rnow(p, tnow, dc) - dc.rho * L)
   return g(z) * m(parcels.length) * sum
