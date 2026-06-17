@@ -195,3 +195,42 @@ export function rendezvousContract(
     status: 'PROPOSED',
   }
 }
+
+// §8.3 HANDOFF — the picker (A) picks the parcel, carries it to a NON-delivery drop tile next to a
+// delivery zone, drops it (ground, not scoring) and vacates; the deliverer (B) waits at an approach
+// tile until the barrier (picker dropped AND vacated, B staged) releases, then steps onto the now-
+// free drop tile, picks the parcel and delivers it — a CROSS-agent delivery scoring `payoff`.
+// Roles are bound by the caller from shared beliefs (picker = closer to the parcel, §9.10), then
+// frozen here. Tiles come from bindHandoff() (RUNTIME_BOUND, §8.2).
+export interface HandoffTiles { parcel: Pos; drop: Pos; vacate: Pos; approach: Pos; delivery: Pos }
+
+export function handoffContract(
+  id: string,
+  parcelId: string,
+  picker: AgentId,
+  deliverer: AgentId,
+  tiles: HandoffTiles,
+  payoff: number,
+  deadline: number,
+): Contract {
+  const at = (p: Pos): LocalGoal => ({ kind: 'AT_TILE', tile: p })
+  return {
+    id,
+    type: 'HANDOFF',
+    steps: [
+      { kind: 'ACTION', agent: picker, primitive: 'pickUp', ids: [parcelId], at: tiles.parcel, post: 'picked' },
+      { kind: 'ACTION', agent: picker, primitive: 'putDown', ids: [parcelId], at: tiles.drop, post: 'dropped', onDelivery: false },
+      { kind: 'LOCAL', agent: picker, goal: at(tiles.vacate), post: 'H_clear' },
+      { kind: 'LOCAL', agent: deliverer, goal: at(tiles.approach), post: 'b_ready' },
+      { kind: 'BARRIER', needs: ['H_clear', 'b_ready'] },
+      { kind: 'ACTION', agent: deliverer, primitive: 'pickUp', ids: [parcelId], at: tiles.drop, post: 'b_picked' },
+      { kind: 'ACTION', agent: deliverer, primitive: 'putDown', ids: [parcelId], at: tiles.delivery, post: 'delivered', onDelivery: true },
+    ],
+    posted: {},
+    payoff,
+    deadline,
+    status: 'PROPOSED',
+    lockOwner: picker,
+    lockParcels: [parcelId],
+  }
+}

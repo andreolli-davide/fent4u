@@ -155,3 +155,26 @@ test('advance: deliverer scoring putDown carries onDelivery:true', () => {
   // deliverer on the delivery tile → scoring putDown
   expect(advance(c, 'courier', { x: 0, y: 0 })).toEqual({ kind: 'putdown', ids: ['p1'], post: 'delivered', onDelivery: true })
 })
+
+import { handoffContract, type HandoffTiles } from '../src/coordination/contract.js'
+
+test('handoffContract builds the §8.3 step list with lock fields', () => {
+  const tiles: HandoffTiles = {
+    parcel: { x: 2, y: 1 }, drop: { x: 1, y: 0 }, vacate: { x: 1, y: 1 },
+    approach: { x: 2, y: 0 }, delivery: { x: 0, y: 0 },
+  }
+  const c = handoffContract('h1', 'p1', 'liaison', 'courier', tiles, 200, 9999)
+  expect(c.type).toBe('HANDOFF')
+  expect(c.status).toBe('PROPOSED')
+  expect(c.lockOwner).toBe('liaison')
+  expect(c.lockParcels).toEqual(['p1'])
+  expect(c.steps).toEqual([
+    { kind: 'ACTION', agent: 'liaison', primitive: 'pickUp', ids: ['p1'], at: { x: 2, y: 1 }, post: 'picked' },
+    { kind: 'ACTION', agent: 'liaison', primitive: 'putDown', ids: ['p1'], at: { x: 1, y: 0 }, post: 'dropped', onDelivery: false },
+    { kind: 'LOCAL', agent: 'liaison', goal: { kind: 'AT_TILE', tile: { x: 1, y: 1 } }, post: 'H_clear' },
+    { kind: 'LOCAL', agent: 'courier', goal: { kind: 'AT_TILE', tile: { x: 2, y: 0 } }, post: 'b_ready' },
+    { kind: 'BARRIER', needs: ['H_clear', 'b_ready'] },
+    { kind: 'ACTION', agent: 'courier', primitive: 'pickUp', ids: ['p1'], at: { x: 1, y: 0 }, post: 'b_picked' },
+    { kind: 'ACTION', agent: 'courier', primitive: 'putDown', ids: ['p1'], at: { x: 0, y: 0 }, post: 'delivered', onDelivery: true },
+  ])
+})
