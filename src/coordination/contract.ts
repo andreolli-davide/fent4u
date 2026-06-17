@@ -96,3 +96,57 @@ export function isContractMsg(p: unknown): p is ContractMsg {
       return false
   }
 }
+
+// Owns the single active contract for ONE agent (mirrors MissionSlot's single-slot rule, §4.3)
+// and applies the `'contract'` a2a sub-protocol. Both replicas converge because the full
+// contract ships in `propose` and every milestone is replicated via `post` (§8.1). This slice
+// has no adoption gate (§8.6) and no deadline/FAILED logic — see the follow-on plans.
+export class ContractRuntime {
+  private c: Contract | null = null
+
+  current(): Contract | null { return this.c }
+  active(): Contract | null { return this.c?.status === 'ACTIVE' ? this.c : null }
+
+  // Liaison side: install PROPOSED and return the msg to broadcast. Goes ACTIVE on the accept.
+  propose(contract: Contract): ContractMsg {
+    this.c = { ...contract, status: 'PROPOSED' }
+    return { kind: 'propose', contract: this.c }
+  }
+
+  // Either agent: flip its OWN milestone and return the post msg to broadcast (§8.1).
+  post(milestone: string): ContractMsg | null {
+    if (this.c === null) return null
+    this.c.posted[milestone] = true
+    return { kind: 'post', id: this.c.id, milestone }
+  }
+
+  // The agent that observed `advance(...) === 'done'` marks SATISFIED, clears, broadcasts.
+  complete(): ContractMsg | null {
+    if (this.c === null) return null
+    const id = this.c.id
+    this.c.status = 'SATISFIED'
+    this.c = null
+    return { kind: 'teardown', id, status: 'SATISFIED' }
+  }
+
+  // Apply an inbound a2a msg; returns an optional reply for the caller to broadcast.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  applyMsg(msg: ContractMsg, _self: AgentId): ContractMsg | null {
+    switch (msg.kind) {
+      case 'propose':
+        // Receiver (Courier) accepts immediately → ACTIVE. Adoption gating is the proposer's
+        // responsibility (§8.6), deferred this slice, so acceptance is unconditional.
+        this.c = { ...msg.contract, status: 'ACTIVE' }
+        return { kind: 'accept', id: msg.contract.id }
+      case 'accept':
+        if (this.c !== null && this.c.id === msg.id) this.c.status = 'ACTIVE'
+        return null
+      case 'post':
+        if (this.c !== null && this.c.id === msg.id) this.c.posted[msg.milestone] = true
+        return null
+      case 'teardown':
+        if (this.c !== null && this.c.id === msg.id) this.c = null
+        return null
+    }
+  }
+}
