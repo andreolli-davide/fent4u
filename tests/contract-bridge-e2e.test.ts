@@ -59,7 +59,7 @@ test('a COORDINATION_CONTRACT/HANDOFF mission drives a handoff to SATISFIED via 
   const lClaims = new ClaimStore(); const cClaims = new ClaimStore()
 
   const inbox: Record<AgentId, A2AMessage[]> = { liaison: [], courier: [] }
-  const send = (m: A2AMessage): void => { inbox[m.to].push(m) }
+  const send = (m: A2AMessage): void => { inbox[m.to].push(structuredClone(m)) } // structuredClone mirrors the production postMessage relay (deep copy across the worker boundary) — no shared `posted` aliasing
   function drain(rt: ContractRuntime, claims: ClaimStore, self: AgentId): void {
     for (const m of inbox[self].splice(0)) {
       if (m.type === 'contract' && isContractMsg(m.payload)) {

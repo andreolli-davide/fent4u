@@ -1,7 +1,8 @@
 // src/coordination/contract.ts
 // DESIGN §8 — the generic coordination-contract primitive. One step list of LOCALs and
 // barriers, run by BOTH agents, advanced by shared monotonic `posted` bookkeeping (§8.1).
-// This slice implements the RENDEZVOUS template only (single barrier, no parcels).
+// Implements all three templates: RENDEZVOUS (positional barrier), HANDOFF (cross-agent
+// parcel delivery via ACTION steps + MISSION lock), and SYNC_GATE (freshness-checked gate overlay).
 import type { AgentId } from '../types/a2a.js'
 import type { Pos } from '../types/perception.js'
 import type { Grid } from '../planning/astar.js'
