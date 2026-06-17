@@ -58,3 +58,19 @@ test('advance: I skip the OTHER agent\'s LOCAL step', () => {
   // courier, far from zone, liaison not yet ready: courier works on ITS own local.
   expect(advance(rdv(), 'courier', { x: 0, y: 0 })).toEqual({ kind: 'navigate', to: { x: 5, y: 5 } })
 })
+
+import { isContractMsg } from '../src/coordination/contract.js'
+
+test('isContractMsg accepts the four sub-protocol kinds', () => {
+  expect(isContractMsg({ kind: 'propose', contract: rdv() })).toBe(true)
+  expect(isContractMsg({ kind: 'accept', id: 'c1' })).toBe(true)
+  expect(isContractMsg({ kind: 'post', id: 'c1', milestone: 'liaison_ready' })).toBe(true)
+  expect(isContractMsg({ kind: 'teardown', id: 'c1', status: 'SATISFIED' })).toBe(true)
+})
+
+test('isContractMsg rejects malformed payloads', () => {
+  expect(isContractMsg(null)).toBe(false)
+  expect(isContractMsg({ kind: 'nope' })).toBe(false)
+  expect(isContractMsg({ kind: 'accept' })).toBe(false)              // missing id
+  expect(isContractMsg({ kind: 'post', id: 'c1' })).toBe(false)      // missing milestone
+})

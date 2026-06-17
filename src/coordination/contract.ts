@@ -68,3 +68,31 @@ export function advance(c: Contract, me: AgentId, self: Pos): ContractAction {
   }
   return { kind: 'done' }
 }
+
+// The contract sub-protocol carried in A2AMessage.payload on the `type:'contract'` channel.
+// propose/accept = the §8.2 handshake; post = replicate a milestone; teardown = §8.2 terminal.
+export type ContractMsg =
+  | { kind: 'propose'; contract: Contract }
+  | { kind: 'accept'; id: string }
+  | { kind: 'post'; id: string; milestone: string }
+  | { kind: 'teardown'; id: string; status: ContractStatus }
+
+// Narrowing guard for an inbound contract payload (unknown → ContractMsg). Trust boundary is
+// in-process structured-clone (relay), so the structural checks are light (cf. isClaimMsg).
+export function isContractMsg(p: unknown): p is ContractMsg {
+  if (typeof p !== 'object' || p === null) return false
+  const m = p as Record<string, unknown>
+  switch (m.kind) {
+    case 'propose':
+      return typeof m.contract === 'object' && m.contract !== null &&
+        typeof (m.contract as Contract).id === 'string'
+    case 'accept':
+      return typeof m.id === 'string'
+    case 'post':
+      return typeof m.id === 'string' && typeof m.milestone === 'string'
+    case 'teardown':
+      return typeof m.id === 'string' && typeof m.status === 'string'
+    default:
+      return false
+  }
+}
