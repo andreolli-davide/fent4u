@@ -10,6 +10,7 @@ export interface PathResult {
   firstStep: Step | null // null iff already at goal
   pushes: PlannedPush[]
   timedOut: boolean // search hit budgetMs before settling — NOT proof of unreachability (§15.3)
+  tollSum: number // Σ toll(tile) over the chosen path's entered tiles; 0 in pure-tick mode
 }
 
 export interface GridTile { type: TileType; dir?: Dir }
@@ -30,6 +31,8 @@ export interface PlanCtx {
   protectedTiles: Pos[]
   budgetMs: number
   cratesAsWalls?: boolean
+  tolls?: Map<string, number> // tileKey -> toll points; absent/empty ⇒ pure-tick mode
+  cTick?: number // §7.1 exchange rate (points per travel tick); required iff tolls non-empty
 }
 
 export const key = (p: Pos): string => `${p.x},${p.y}`
@@ -148,7 +151,9 @@ const manhattan = (a: Pos, b: Pos): number => Math.abs(a.x - b.x) + Math.abs(a.y
 
 interface Node {
   pos: Pos
-  g: number
+  g: number // tick count (steps) — what L is reported from
+  cost: number // ordering cost: cTick*g + tollAccum (== g in pure-tick mode)
+  tollAccum: number
   f: number
   firstStep: Step | null
   seq: number // insertion order — final, deterministic tie-break (§9)
@@ -156,6 +161,7 @@ interface Node {
 
 // Heap order: lower f wins; ties prefer the deeper node (larger g ⇒ smaller h,
 // fewer expansions); remaining ties broken by insertion order for determinism.
+// In toll mode f = cost + h so the heap still correctly orders by total estimated cost.
 function before(a: Node, b: Node): boolean {
   if (a.f !== b.f) return a.f < b.f
   if (a.g !== b.g) return a.g > b.g
@@ -204,18 +210,23 @@ class NodeHeap {
 }
 
 export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResult {
-  if (from.x === to.x && from.y === to.y) return { reachable: true, L: 0, firstStep: null, pushes: [], timedOut: false }
+  if (from.x === to.x && from.y === to.y) return { reachable: true, L: 0, firstStep: null, pushes: [], timedOut: false, tollSum: 0 }
+
+  const tolls = ctx.tolls
+  const tollMode = tolls !== undefined && tolls.size > 0
+  const cTick = tollMode ? (ctx.cTick ?? 1) : 1
+  const tollOf = (k: string): number => (tollMode ? (tolls!.get(k) ?? 0) : 0)
 
   const deadline = performance.now() + ctx.budgetMs
   const open = new NodeHeap()
-  const bestG = new Map<string, number>() // best known g per tile — drives relaxation and stale-pop skips
+  const bestCost = new Map<string, number>() // best known cost per tile — drives relaxation and stale-pop skips
   const closed = new Set<string>()
   let seq = 0
-  open.push({ pos: from, g: 0, f: manhattan(from, to), firstStep: null, seq: seq++ })
-  bestG.set(key(from), 0)
+  open.push({ pos: from, g: 0, cost: 0, tollAccum: 0, f: cTick * manhattan(from, to), firstStep: null, seq: seq++ })
+  bestCost.set(key(from), 0)
 
   while (open.size > 0) {
-    if (performance.now() > deadline) return { reachable: false, L: Infinity, firstStep: null, pushes: [], timedOut: true }
+    if (performance.now() > deadline) return { reachable: false, L: Infinity, firstStep: null, pushes: [], timedOut: true, tollSum: 0 }
     const cur = open.pop()
     const ck = key(cur.pos)
     if (closed.has(ck)) continue // stale heap duplicate (lazy decrease-key)
@@ -229,10 +240,9 @@ export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResu
         const cratePos = { x: from.x + d0.dx, y: from.y + d0.dy }
         pushes.push({ crateId: fp.crateId, from: cratePos, to: { x: cratePos.x + d0.dx, y: cratePos.y + d0.dy }, tickOffset: 0 })
       }
-      return { reachable: true, L: cur.g, firstStep: cur.firstStep, pushes, timedOut: false }
+      return { reachable: true, L: cur.g, firstStep: cur.firstStep, pushes, timedOut: false, tollSum: cur.tollAccum }
     }
 
-    const g = cur.g + 1
     for (const { dir, dx, dy } of DIRS) {
       const np = { x: cur.pos.x + dx, y: cur.pos.y + dy }
       const nk = key(np)
@@ -251,13 +261,15 @@ export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResu
       } else {
         firstStep = cur.firstStep ?? { kind: 'move', dir }
       }
-      const prev = bestG.get(nk)
-      if (prev !== undefined && prev <= g) continue
-      bestG.set(nk, g)
-      open.push({ pos: np, g, f: g + manhattan(np, to), firstStep, seq: seq++ })
+      const stepToll = tollOf(nk)
+      const cost = cur.cost + cTick + stepToll
+      const prev = bestCost.get(nk)
+      if (prev !== undefined && prev <= cost) continue
+      bestCost.set(nk, cost)
+      open.push({ pos: np, g: cur.g + 1, cost, tollAccum: cur.tollAccum + stepToll, f: cost + cTick * manhattan(np, to), firstStep, seq: seq++ })
     }
   }
-  return { reachable: false, L: Infinity, firstStep: null, pushes: [], timedOut: false }
+  return { reachable: false, L: Infinity, firstStep: null, pushes: [], timedOut: false, tollSum: 0 }
 }
 
 export function d(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): number {
