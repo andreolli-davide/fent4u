@@ -4,6 +4,7 @@
 // This slice implements the RENDEZVOUS template only (single barrier, no parcels).
 import type { AgentId } from '../types/a2a.js'
 import type { Pos } from '../types/perception.js'
+import type { Grid } from '../planning/astar.js'
 
 export type ContractType = 'RENDEZVOUS' | 'HANDOFF' | 'SYNC_GATE'
 export type ContractStatus =
@@ -233,4 +234,36 @@ export function handoffContract(
     lockOwner: picker,
     lockParcels: [parcelId],
   }
+}
+
+// §8.3 runtime tile binding (the 3 binding rules). Pure over the grid + parcel position. Returns a
+// HandoffTiles or null ⇒ DECLINE the bid (do not propose). A `drop` tile must be walkable, NON-
+// delivery (a delivery-tile drop would score for the picker solo, voiding the cross-agent condition)
+// and adjacent to a delivery tile; it must have ≥2 distinct walkable non-delivery neighbours for the
+// picker's `vacate` step-off and the deliverer's `approach` staging (agents never share a tile).
+// Deterministic: delivery zones in array order, neighbours in a fixed order, free neighbours sorted.
+// Walkability here is grid-only (non-wall); full push-aware reachability is left to stepToward,
+// which blocks gracefully if a bound tile turns out unreachable at run time.
+export function bindHandoff(grid: Grid, parcel: Pos): HandoffTiles | null {
+  const walkableNonDelivery = (p: Pos): boolean => {
+    const t = grid.tiles.get(`${p.x},${p.y}`)
+    return t !== undefined && t.type !== 'wall' && t.type !== 'delivery'
+  }
+  const neigh = (p: Pos): Pos[] => [
+    { x: p.x, y: p.y + 1 }, { x: p.x, y: p.y - 1 },
+    { x: p.x - 1, y: p.y }, { x: p.x + 1, y: p.y },
+  ]
+  const eq = (a: Pos, b: Pos): boolean => a.x === b.x && a.y === b.y
+  for (const delivery of grid.deliveryZones) {
+    for (const drop of neigh(delivery)) {
+      if (!walkableNonDelivery(drop)) continue
+      const free = neigh(drop)
+        .filter((n) => walkableNonDelivery(n) && !eq(n, delivery))
+        .sort((a, b) => a.x - b.x || a.y - b.y)
+      if (free.length >= 2) {
+        return { parcel, drop, vacate: free[0], approach: free[1], delivery }
+      }
+    }
+  }
+  return null
 }

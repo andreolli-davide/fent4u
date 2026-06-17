@@ -178,3 +178,37 @@ test('handoffContract builds the §8.3 step list with lock fields', () => {
     { kind: 'ACTION', agent: 'courier', primitive: 'putDown', ids: ['p1'], at: { x: 0, y: 0 }, post: 'delivered', onDelivery: true },
   ])
 })
+
+import { bindHandoff } from '../src/coordination/contract.js'
+import { buildGrid } from '../src/planning/astar.js'
+import type { Tile } from '../src/types/perception.js'
+
+// 3x2 walkable grid (x:0..2, y:0..1) with (0,0) a delivery tile.
+function grid3x2() {
+  const tiles: Tile[] = []
+  for (let x = 0; x <= 2; x++) for (let y = 0; y <= 1; y++) {
+    tiles.push({ pos: { x, y }, type: x === 0 && y === 0 ? 'delivery' : 'walkable' })
+  }
+  return buildGrid(tiles)
+}
+
+test('bindHandoff finds a non-delivery drop tile adjacent to delivery with vacate + approach', () => {
+  const t = bindHandoff(grid3x2(), { x: 2, y: 1 })
+  expect(t).toEqual({
+    parcel: { x: 2, y: 1 },
+    drop: { x: 1, y: 0 },
+    vacate: { x: 1, y: 1 },
+    approach: { x: 2, y: 0 },
+    delivery: { x: 0, y: 0 },
+  })
+})
+
+test('bindHandoff declines (null) when no walkable non-delivery tile is adjacent to a delivery', () => {
+  // A lone delivery tile with all neighbours walls → no valid drop tile.
+  const tiles: Tile[] = [
+    { pos: { x: 0, y: 0 }, type: 'delivery' },
+    { pos: { x: 1, y: 0 }, type: 'wall' },
+    { pos: { x: 0, y: 1 }, type: 'wall' },
+  ]
+  expect(bindHandoff(buildGrid(tiles), { x: 0, y: 1 })).toBeNull()
+})
