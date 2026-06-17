@@ -78,15 +78,19 @@ test('a COORDINATION_CONTRACT/HANDOFF mission drives a handoff to SATISFIED via 
 
   let guard = 0
   let satisfied = false
+  let contractEverActive = false
   while (!satisfied && guard++ < 60) {
     drain(lc, lClaims, 'liaison'); drain(cc, cClaims, 'courier')
     await loopL.tick(snapAt(L.pos, C.pos, 'courier'))
     await loopC.tick(snapAt(C.pos, L.pos, 'liaison'))
     drain(lc, lClaims, 'liaison'); drain(cc, cClaims, 'courier')
+    // Capture liveness: a contract was active if it occupied a runtime slot at any tick
+    if (lc.current() !== null || cc.current() !== null) contractEverActive = true
     // SATISFIED ⇔ a contract existed and both runtimes have torn it down.
     satisfied = lc.current() === null && cc.current() === null && guard > 2
   }
 
+  expect(contractEverActive).toBe(true) // liveness witness: contract was actually instantiated via the bridge
   expect(guard).toBeLessThan(60) // converged
   expect(lc.current()).toBeNull()
   expect(cc.current()).toBeNull()
