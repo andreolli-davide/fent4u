@@ -10,6 +10,7 @@ import { select, chooseExplore, matches, type Intention, type Candidate } from '
 import type { Params } from './params.js'
 import { ClaimStore, type ClaimMsg, type Claim } from '../coordination/claims.js'
 import { advance, type Contract, type ContractMsg, type ContractRuntime } from '../coordination/contract.js'
+import { buildContract } from '../coordination/bridge.js'
 import { runAuction, type AgentSnap } from '../coordination/auction.js'
 import { runRebalance, type RebalanceAgent } from '../coordination/rebalance.js'
 import type { A2AMessage, AgentId } from '../types/a2a.js'
@@ -103,6 +104,32 @@ export class BdiLoop {
       return v
     }
 
+    // §8 bridge — the Liaison (proposer, §2.1) binds a pending COORDINATION_CONTRACT mission into a
+    // Contract once it is bindable, and proposes it. buildContract returns null while unbindable
+    // (parcel/partner unperceived, no valid tiles) → hold and retry next tick (deferred bind, §8.2).
+    // Once proposed, the runtime slot is non-null so this stops firing — idempotent by derivation.
+    if (
+      this.client.role === 'liaison' &&
+      this.mission?.contracts &&
+      this.mission.contracts.current() === null &&
+      mView?.current()?.kind === 'COORDINATION_CONTRACT'
+    ) {
+      const partner = this.partnerBelief(beliefs)
+      const c = buildContract(mView.current()!, this.grid, {
+        parcels: [...beliefs.parcels.values()],
+        self: { id: this.client.role, pos: self },
+        partner: partner !== null ? { id: this.coord!.partner, pos: partner.pos } : null,
+        isClaimed: (id) => this.claims.claimedBy(id) !== null,
+        tnow,
+      })
+      if (c !== null) {
+        this.sendContract(this.mission.contracts.propose(c))
+        this.log.info({ tick: tnow, contract: c.id, type: c.type }, 'contract proposed')
+      } else {
+        this.log.debug({ tick: tnow, missionId: mView.current()!.id }, 'contract bind pending')
+      }
+    }
+
     // §9.10 — MISSION-lock reconcile (level-triggered, idempotent). The picker (lockOwner) installs
     // the active contract's lockParcels as origin:'MISSION' claims; teardown (no active contract I
     // own) releases them. Runs BEFORE the contract short-circuit so a release tick still falls
@@ -114,10 +141,31 @@ export class BdiLoop {
     // returns before the auction/argmax so a contracted agent does no base-play allocation.
     const activeContract = this.mission?.contracts?.active() ?? null
     if (activeContract !== null) {
-      await this.actContract(activeContract, beliefs, planCtx, tnow)
-      this.prevSelf = self
-      this.log.debug({ durationMs: performance.now() - t0, tick: tnow, contract: activeContract.id }, 'tick (contract)')
-      return
+      // §8.5 — a SYNC_GATE has no terminal barrier; a lost partner would freeze the survivor on a
+      // stale gate forever. Partner-loss aborts it (Active→Failed), clears the gate, resumes base play.
+      if (activeContract.type === 'SYNC_GATE' && !partnerAlive) {
+        const msg = this.mission!.contracts!.fail()
+        if (msg !== null) this.sendContract(msg)
+        this.log.info({ tick: tnow, contract: activeContract.id, status: 'FAILED' }, 'sync-gate partner lost')
+        // fall through to base play below (slot now empty, gate disarmed)
+      } else {
+        const action = advance(activeContract, this.client.role, self)
+        if (action.kind === 'gated') {
+          // §8.5 movement overlay: past staging, base play resumes — but only through an OPEN+fresh
+          // gate (stale ⇒ CLOSED). A held tick takes no action; an open tick falls through to base play.
+          if (!this.mission!.contracts!.gateOpen(tnow)) {
+            this.prevSelf = self
+            this.log.debug({ tick: tnow, contract: activeContract.id, gate: 'CLOSED' }, 'tick (gate held)')
+            return
+          }
+          // gate OPEN+fresh → fall through to base play below
+        } else {
+          await this.actContract(activeContract, beliefs, planCtx, tnow)
+          this.prevSelf = self
+          this.log.debug({ durationMs: performance.now() - t0, tick: tnow, contract: activeContract.id }, 'tick (contract)')
+          return
+        }
+      }
     }
 
     // §9.7: coordination (auction/rebalance/pool) must read SHARED state only. The only

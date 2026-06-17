@@ -3,7 +3,7 @@ import { connect } from '../external/deliveroo.js'
 import { Blackboard } from '../blackboard/blackboard.js'
 import { BdiLoop } from '../bdi/loop.js'
 import { ClaimStore, isClaimMsg } from '../coordination/claims.js'
-import { ContractRuntime, isContractMsg } from '../coordination/contract.js'
+import { ContractRuntime, isContractMsg, isGateMsg } from '../coordination/contract.js'
 import { TeamMissionView } from '../mission/view.js'
 import { isMission } from '../mission/kinds.js'
 import type { WorkerEnvelope, A2AMessage } from '../types/a2a.js'
@@ -85,6 +85,8 @@ self.onmessage = (event: MessageEvent<WorkerEnvelope>) => {
     } else if (msg.type === 'contract' && isContractMsg(msg.payload)) {
       const reply = contracts?.applyMsg(msg.payload, 'courier') ?? null
       if (reply !== null) send({ from: 'courier', to: 'liaison', type: 'contract', payload: reply })
+    } else if (msg.type === 'gate' && isGateMsg(msg.payload)) {
+      contracts?.applyGate(msg.payload)
     } else blackboard?.receive(msg)
   }
 }
