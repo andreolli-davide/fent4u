@@ -59,6 +59,10 @@ export function bestSubset(
   if (positive.length === 0) return { set: [], value: 0 }
 
   const forced = positive.filter((x) => x.r - dc.rho * floorTicks <= 0).map((x) => x.p)
+  // Pre-drop singleton-invalid optionals: the prefix-only argmax below can't skip a high-Rnow
+  // violator, so without this a valid low-reward subset (e.g. [a] when [b] violates) is
+  // unreachable (§7.2). FORCED parcels deliberately bypass this — a forced violator must zero
+  // the whole bundle via vValue's set-level filter (§7.3 worst-case), not be silently dropped.
   const optional = positive
     .filter((x) => x.r - dc.rho * floorTicks > 0)
     .filter((x) => filter([x.p], tile))
@@ -71,5 +75,5 @@ export function bestSubset(
     const value = vValue(set, tile, 0, tnow, dc, m, g, undefined, filter)
     if (best === null || value > best.value) best = { set, value }
   }
-  return best!
+  return best ?? { set: [], value: 0 }
 }
