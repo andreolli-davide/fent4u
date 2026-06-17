@@ -1,7 +1,7 @@
 import type { Pos } from '../types/perception.js'
 import type { ParcelBelief } from '../blackboard/beliefs.js'
 import type { Params } from './params.js'
-import { rate, vValue, bestZone, M1, G1, W1, F1, type DecayConsts, type ParcelWeight, type CountShaper, type ZoneShaper, type BundleFilter } from './utility.js'
+import { rate, vValue, bestZone, M1, G1, W1, F1, type DecayConsts, type ParcelWeight, type CountShaper, type ZoneShaper, type BundleFilter, type Dist } from './utility.js'
 
 export interface Route {
   pickups: ParcelBelief[] // ordered parcels to collect
@@ -11,10 +11,8 @@ export interface Route {
   toll: number // Σ toll over self→pickups→zone; 0 when no priced constraint (§7.1)
 }
 
-type Dist = (a: Pos, b: Pos) => { L: number; toll: number }
-
 /** Tick length + toll-sum of self -> pickups in order -> zone. L is Infinity if any leg is unreachable. */
-function routeLeg(self: Pos, pickups: ParcelBelief[], zone: Pos, dist: Dist): { L: number; toll: number } {
+function routeAccum(self: Pos, pickups: ParcelBelief[], zone: Pos, dist: Dist): { L: number; toll: number } {
   let L = 0, toll = 0, at = self
   for (const p of pickups) { const d = dist(at, p.pos); L += d.L; toll += d.toll; at = p.pos }
   const d = dist(at, zone); L += d.L; toll += d.toll
@@ -24,7 +22,7 @@ function routeLeg(self: Pos, pickups: ParcelBelief[], zone: Pos, dist: Dist): { 
 export function uRoute(r: Route, tnow: number, dc: DecayConsts, params: Params, weight: ParcelWeight = W1, m: CountShaper = M1, g: ZoneShaper = G1, filter: BundleFilter = F1): number {
   // r.L was computed at build time; accuracy degrades if the agent has moved since.
   // The BDI loop rebuilds routes each tick so drift is bounded to one tick.
-  return rate(vValue(r.delivered, r.zone, r.L, tnow, dc, m, g, weight, filter) - r.toll, r.L, params.alpha)
+  return rate(vValue(r.delivered, r.zone, r.L, tnow, dc, m, g, weight, filter) - r.toll, r.L, params.alpha) // §7.1: net the path toll from realised value
 }
 
 function score(self: Pos, carried: ParcelBelief[], pickups: ParcelBelief[], zones: Pos[], tnow: number, dc: DecayConsts, params: Params, dist: Dist, weight: ParcelWeight, m: CountShaper, g: ZoneShaper, filter: BundleFilter = F1): { route: Route; u: number } | null {
@@ -33,14 +31,14 @@ function score(self: Pos, carried: ParcelBelief[], pickups: ParcelBelief[], zone
   // (or self when carrying-only) — not by the whole-route rate from self. Zone choice is
   // invariant to `weight` (same delivered set across zones), so bestZone's W1 default is safe.
   const tail = pickups.length > 0 ? pickups[pickups.length - 1]!.pos : self
-  const pre = routeLeg(self, pickups, tail, dist) // self → q1 → … → qₙ (trailing qₙ→qₙ leg = 0)
+  const pre = routeAccum(self, pickups, tail, dist) // self → q1 → … → qₙ (trailing qₙ→qₙ leg = 0)
   if (!Number.isFinite(pre.L)) return null
   const zp = bestZone(delivered, tail, zones, tnow, dc, dist, params.alpha, m, g, filter)
   if (zp === null) return null
   // U_route still uses the honest whole-route length (§9.2 eq. for U_route): prefix + tail leg.
   const L = pre.L + zp.L
   const toll = pre.toll + zp.toll
-  const u = rate(vValue(delivered, zp.zone, L, tnow, dc, m, g, weight, filter) - toll, L, params.alpha)
+  const u = rate(vValue(delivered, zp.zone, L, tnow, dc, m, g, weight, filter) - toll, L, params.alpha) // §7.1: net the path toll from realised value
   return { route: { pickups, zone: zp.zone, delivered, L, toll }, u }
 }
 

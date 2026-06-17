@@ -9,7 +9,7 @@ import type { Pos } from '../types/perception.js'
 import type { Params } from '../bdi/params.js'
 import type { AgentId } from '../types/a2a.js'
 import { routeFromClaims, uRoute } from '../bdi/route.js'
-import { pAvail, type DecayConsts, type EnemyThreat, type ParcelWeight } from '../bdi/utility.js'
+import { pAvail, type DecayConsts, type EnemyThreat, type ParcelWeight, type Dist } from '../bdi/utility.js'
 
 export interface AgentSnap {
   id: AgentId
@@ -23,7 +23,7 @@ export interface AuctionInput {
   agents: [AgentSnap, AgentSnap]
   enemies: AgentBelief[]
   zones: Pos[]
-  dist: (a: Pos, b: Pos) => { L: number; toll: number }
+  dist: Dist
   dc: DecayConsts
   params: Params
   tnow: number

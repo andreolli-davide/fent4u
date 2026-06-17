@@ -68,6 +68,10 @@ export type ZoneShaper = (z: Pos) => number
 export const M1: CountShaper = () => 1
 export const G1: ZoneShaper = () => 1
 
+/** Path-distance result: tick length L and Σ priced-tile toll along the chosen path (§7.1). */
+export interface DistResult { L: number; toll: number }
+export type Dist = (a: Pos, b: Pos) => DistResult
+
 /** Rate denominator (§5.5): value / (L+1)^alpha. */
 export function rate(value: number, L: number, alpha: number): number {
   return value / Math.pow(L + 1, alpha)
@@ -102,12 +106,12 @@ export interface ZonePick { zone: Pos; L: number; toll: number; rate: number }
  *   unreachable tiles. Infinite-distance zones are skipped; NaN distances are
  *   also skipped (coincidental, not guaranteed).
  */
-export function bestZone(parcels: ParcelBelief[], from: Pos, zones: Pos[], tnow: number, dc: DecayConsts, dist: (a: Pos, b: Pos) => { L: number; toll: number }, alpha: number, m: CountShaper = M1, g: ZoneShaper = G1, filter: BundleFilter = F1): ZonePick | null {
+export function bestZone(parcels: ParcelBelief[], from: Pos, zones: Pos[], tnow: number, dc: DecayConsts, dist: Dist, alpha: number, m: CountShaper = M1, g: ZoneShaper = G1, filter: BundleFilter = F1): ZonePick | null {
   let best: ZonePick | null = null
   for (const z of zones) {
     const { L, toll } = dist(from, z)
     if (!Number.isFinite(L)) continue
-    const r = rate(vValue(parcels, z, L, tnow, dc, m, g, undefined, filter) - toll, L, alpha)
+    const r = rate(vValue(parcels, z, L, tnow, dc, m, g, undefined, filter) - toll, L, alpha) // §7.1: net the path toll from realised value
     if (best === null || r > best.rate) best = { zone: z, L, toll, rate: r }
   }
   return best

@@ -3,7 +3,7 @@ import type { DeliverooClient } from '../external/deliveroo.js'
 import type { PerceptionSnapshot, Pos, Tile } from '../types/perception.js'
 import { BeliefBase, type ParcelBelief, type AgentBelief } from '../blackboard/beliefs.js'
 import { buildGrid, buildObstacles, planPath, isPushAdmissible, type Grid, type PlanCtx, type Dir } from '../planning/astar.js'
-import { decayConsts, pAvail, tileKey, M1, G1, W1, type DecayConsts, type EnemyThreat } from './utility.js'
+import { decayConsts, pAvail, tileKey, M1, G1, W1, type DecayConsts, type EnemyThreat, type DistResult, type Dist } from './utility.js'
 import { bestSubset } from '../mission/shapers.js'
 import { buildRoute, uRoute, routeFromClaims } from './route.js'
 import { select, chooseExplore, matches, type Intention, type Candidate } from './intentions.js'
@@ -74,8 +74,8 @@ export class BdiLoop {
     // Per-tick memo: ctx is fixed for the tick, and route/auction/rebalance/explore all
     // re-query the same (a,b) pairs many times (bestInsert is O(n²) in dist calls). Keyed
     // by ordered (a,b) — planPath is directional (push asymmetry, tolls), so never symmetric.
-    const distMemo = new Map<string, { L: number; toll: number }>()
-    const dist = (a: Pos, b: Pos): { L: number; toll: number } => {
+    const distMemo = new Map<string, DistResult>()
+    const dist: Dist = (a, b) => {
       const k = `${a.x},${a.y}|${b.x},${b.y}`
       const hit = distMemo.get(k)
       if (hit !== undefined) return hit
@@ -245,7 +245,7 @@ export class BdiLoop {
   }
 
   /** Pickable parcels with P_avail>0, plus the per-parcel P_avail used to weight route value (§5.5). */
-  private buildPool(beliefs: BeliefBase, self: Pos, tnow: number, dist: (a: Pos, b: Pos) => { L: number; toll: number }): { pool: ParcelBelief[]; weight: Map<string, number> } {
+  private buildPool(beliefs: BeliefBase, self: Pos, tnow: number, dist: Dist): { pool: ParcelBelief[]; weight: Map<string, number> } {
     const enemies = [...beliefs.agents.values()].filter((a) => a.rel === 'enemy')
     const pool: ParcelBelief[] = []
     const weight = new Map<string, number>()
