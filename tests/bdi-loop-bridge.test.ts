@@ -38,7 +38,7 @@ function snap(selfPos: Pos): PerceptionSnapshot {
   return {
     tick: 1, self: { id: 'L', name: 'L', teamId: 'A', pos: selfPos, score: 0 },
     parcels: [{ id: 'p1', pos: { x: 0, y: 0 }, reward: 100, carriedBy: null }],
-    agents: [{ id: 'C', name: 'C', teamId: 'A', pos: { x: 5, y: 2 } }], crates: [],
+    agents: [{ id: 'C', name: 'C', teamId: 'A', pos: { x: 5, y: 2 }, score: 0 }], crates: [],
   }
 }
 
