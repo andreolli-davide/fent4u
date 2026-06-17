@@ -657,3 +657,12 @@ active (`bun test tests/` stays green).
 - Lifecycle hardening: barrier deadlines → `FAILED`, commit timeout → `ABORTED`, adoption gating.
 - Opportunistic base-play pickups while blocked at a barrier.
 - Full push-aware reachability inside `bindHandoff` (currently grid-walkability only).
+
+## Review-surfaced follow-on TODOs (from the final whole-branch review)
+
+Captured here so the bridge / lifecycle-hardening author addresses them when the relevant code path first exists. None is a live defect in this slice (the handoff contract's `lockParcels === ids` is a fixed singleton and no abort/back-to-back path exists yet).
+
+- **AUCTION-claim release on contract pickup (bridge):** `actContract`'s contract pickup does not release an AUCTION self-claim on the picked id the way base-play `doPickup` does. Safe today (the only contract id is the MISSION-locked parcel), but a future caller that puts a parcel already AUCTION-claimed into `ACTION.ids` would leak that claim (released only via TTL). Add a release/guard when the bridge can emit such ids.
+- **Same-tick re-lock race (bridge):** teardown `release` uses `epoch: tnow`; `applyMsg` only ignores `epoch < cur.epoch`. Back-to-back handoffs re-locking the *same* parcel on the *same* tick could let a same-epoch release delete the new lock at the partner. No back-to-back path exists yet; guard when chaining contracts on a shared parcel becomes possible.
+- **`rewardSeen=0` synthetic belief on abort (lifecycle hardening):** `BeliefBase.ensureParcel` inserts the deliverer's never-perceived handoff parcel with `rewardSeen=0`. While the contract is ACTIVE the §9 selector is short-circuited so 0 cannot bias a route; but if a future abort path tears the contract down *after* the deliverer picked up and *before* delivery, it is left carrying a 0-reward synthetic parcel and `U_route` would value delivering it at 0. The abort handler must `applyDrop`/`applyDelivery` (or refresh `rewardSeen`) for any still-carried contract parcel.
+- **`bindHandoff` vacate/approach mutual blocking (push-aware reachability):** the two free neighbours of the drop tile are only guaranteed distinct + walkable; `approach` may sit on the picker's vacate route, causing transient mutual blocking that only `stepToward` re-planning resolves. Acceptable liveness soft spot today; subsumed by the full push-aware reachability follow-on above.
