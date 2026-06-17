@@ -4,6 +4,7 @@
 // This slice implements the RENDEZVOUS template only (single barrier, no parcels).
 import type { AgentId } from '../types/a2a.js'
 import type { Pos } from '../types/perception.js'
+import type { Grid } from '../planning/astar.js'
 
 export type ContractType = 'RENDEZVOUS' | 'HANDOFF' | 'SYNC_GATE'
 export type ContractStatus =
@@ -30,11 +31,14 @@ export function navTarget(goal: LocalGoal): Pos {
   return goal.kind === 'AT_TILE' ? goal.tile : goal.center
 }
 
-// A single step in the contract's plan. Both agents hold the SAME list; each executes only
-// its own LOCAL steps and blocks on every BARRIER (§8.1). (ACTION steps land in the handoff plan.)
+// A single step in the contract's plan. Both agents hold the SAME list; each executes only its
+// own LOCAL/ACTION steps and blocks on every BARRIER (§8.1). An ACTION is an atomic game primitive
+// fired at tile `at` with EXPLICIT ids (§8.3 rule 1 — never dump base-play parcels on the corridor);
+// `onDelivery` marks the deliverer's scoring putDown (selects the belief update in the loop).
 export type Step =
   | { kind: 'LOCAL'; agent: AgentId; goal: LocalGoal; post: string }
   | { kind: 'BARRIER'; needs: string[] }
+  | { kind: 'ACTION'; agent: AgentId; primitive: 'pickUp' | 'putDown'; ids: string[]; at: Pos; post: string; onDelivery?: boolean }
 
 export interface Contract {
   id: string
@@ -44,6 +48,8 @@ export interface Contract {
   payoff: number
   deadline: number
   status: ContractStatus
+  lockOwner?: AgentId      // §9.10 — the single party that installs MISSION locks (handoff picker)
+  lockParcels?: string[]   // §9.10 — parcels the contract MISSION-locks for its life
 }
 
 // What THIS agent should do for the contract this tick. Pure. Rescans from step 0 every call:
@@ -54,6 +60,8 @@ export type ContractAction =
   | { kind: 'post'; milestone: string }
   | { kind: 'block' }
   | { kind: 'done' }
+  | { kind: 'pickup'; ids: string[]; post: string }
+  | { kind: 'putdown'; ids: string[]; post: string; onDelivery: boolean }
 
 export function advance(c: Contract, me: AgentId, self: Pos): ContractAction {
   for (const s of c.steps) {
@@ -61,12 +69,24 @@ export function advance(c: Contract, me: AgentId, self: Pos): ContractAction {
       if (s.needs.every((m) => c.posted[m])) continue // released → fall through to later steps
       return { kind: 'block' }
     }
-    if (s.agent !== me) continue        // not my LOCAL → skip (the partner runs it)
-    if (c.posted[s.post]) continue      // my milestone already reached → advance
-    if (goalSatisfied(s.goal, self)) return { kind: 'post', milestone: s.post }
-    return { kind: 'navigate', to: navTarget(s.goal) }
+    if (s.agent !== me) continue   // not my step → skip (the partner runs it)
+    if (c.posted[s.post]) continue // my milestone already reached → advance
+    if (s.kind === 'LOCAL') {
+      if (goalSatisfied(s.goal, self)) return { kind: 'post', milestone: s.post }
+      return { kind: 'navigate', to: navTarget(s.goal) }
+    }
+    // s.kind === 'ACTION' — self-navigate to the action tile, then fire the primitive.
+    if (self.x !== s.at.x || self.y !== s.at.y) return { kind: 'navigate', to: s.at }
+    return s.primitive === 'pickUp'
+      ? { kind: 'pickup', ids: s.ids, post: s.post }
+      : { kind: 'putdown', ids: s.ids, post: s.post, onDelivery: s.onDelivery ?? false }
   }
-  return { kind: 'done' }
+  // Fell through: every barrier released and every step of MINE posted. The contract is SATISFIED
+  // only when EVERY non-barrier milestone is posted (mine AND the partner's) — otherwise hold while
+  // the partner finishes (the handoff picker waits after vacating until the deliverer scores). In
+  // rendezvous both LOCALs posted ⇒ all-posted ⇒ done for both, so this is backward-compatible.
+  const allPosted = c.steps.every((s) => s.kind === 'BARRIER' || c.posted[s.post])
+  return allPosted ? { kind: 'done' } : { kind: 'block' }
 }
 
 // The contract sub-protocol carried in A2AMessage.payload on the `type:'contract'` channel.
@@ -175,4 +195,75 @@ export function rendezvousContract(
     deadline,
     status: 'PROPOSED',
   }
+}
+
+// §8.3 HANDOFF — the picker (A) picks the parcel, carries it to a NON-delivery drop tile next to a
+// delivery zone, drops it (ground, not scoring) and vacates; the deliverer (B) waits at an approach
+// tile until the barrier (picker dropped AND vacated, B staged) releases, then steps onto the now-
+// free drop tile, picks the parcel and delivers it — a CROSS-agent delivery scoring `payoff`.
+// Roles are bound by the caller from shared beliefs (picker = closer to the parcel, §9.10), then
+// frozen here. Tiles come from bindHandoff() (RUNTIME_BOUND, §8.2).
+export interface HandoffTiles { parcel: Pos; drop: Pos; vacate: Pos; approach: Pos; delivery: Pos }
+
+export function handoffContract(
+  id: string,
+  parcelId: string,
+  picker: AgentId,
+  deliverer: AgentId,
+  tiles: HandoffTiles,
+  payoff: number,
+  deadline: number,
+): Contract {
+  const at = (p: Pos): LocalGoal => ({ kind: 'AT_TILE', tile: p })
+  return {
+    id,
+    type: 'HANDOFF',
+    steps: [
+      { kind: 'ACTION', agent: picker, primitive: 'pickUp', ids: [parcelId], at: tiles.parcel, post: 'picked' },
+      { kind: 'ACTION', agent: picker, primitive: 'putDown', ids: [parcelId], at: tiles.drop, post: 'dropped', onDelivery: false },
+      { kind: 'LOCAL', agent: picker, goal: at(tiles.vacate), post: 'H_clear' },
+      { kind: 'LOCAL', agent: deliverer, goal: at(tiles.approach), post: 'b_ready' },
+      { kind: 'BARRIER', needs: ['H_clear', 'b_ready'] },
+      { kind: 'ACTION', agent: deliverer, primitive: 'pickUp', ids: [parcelId], at: tiles.drop, post: 'b_picked' },
+      { kind: 'ACTION', agent: deliverer, primitive: 'putDown', ids: [parcelId], at: tiles.delivery, post: 'delivered', onDelivery: true },
+    ],
+    posted: {},
+    payoff,
+    deadline,
+    status: 'PROPOSED',
+    lockOwner: picker,
+    lockParcels: [parcelId],
+  }
+}
+
+// §8.3 runtime tile binding (the 3 binding rules). Pure over the grid + parcel position. Returns a
+// HandoffTiles or null ⇒ DECLINE the bid (do not propose). A `drop` tile must be walkable, NON-
+// delivery (a delivery-tile drop would score for the picker solo, voiding the cross-agent condition)
+// and adjacent to a delivery tile; it must have ≥2 distinct walkable non-delivery neighbours for the
+// picker's `vacate` step-off and the deliverer's `approach` staging (agents never share a tile).
+// Deterministic: delivery zones in array order, neighbours in a fixed order, free neighbours sorted.
+// Walkability here is grid-only (non-wall); full push-aware reachability is left to stepToward,
+// which blocks gracefully if a bound tile turns out unreachable at run time.
+export function bindHandoff(grid: Grid, parcel: Pos): HandoffTiles | null {
+  const walkableNonDelivery = (p: Pos): boolean => {
+    const t = grid.tiles.get(`${p.x},${p.y}`)
+    return t !== undefined && t.type !== 'wall' && t.type !== 'delivery'
+  }
+  const neigh = (p: Pos): Pos[] => [
+    { x: p.x, y: p.y + 1 }, { x: p.x, y: p.y - 1 },
+    { x: p.x - 1, y: p.y }, { x: p.x + 1, y: p.y },
+  ]
+  const eq = (a: Pos, b: Pos): boolean => a.x === b.x && a.y === b.y
+  for (const delivery of grid.deliveryZones) {
+    for (const drop of neigh(delivery)) {
+      if (!walkableNonDelivery(drop)) continue
+      const free = neigh(drop)
+        .filter((n) => walkableNonDelivery(n) && !eq(n, delivery))
+        .sort((a, b) => a.x - b.x || a.y - b.y)
+      if (free.length >= 2) {
+        return { parcel, drop, vacate: free[0], approach: free[1], delivery }
+      }
+    }
+  }
+  return null
 }
