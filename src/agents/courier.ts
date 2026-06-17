@@ -3,6 +3,7 @@ import { connect } from '../external/deliveroo.js'
 import { Blackboard } from '../blackboard/blackboard.js'
 import { BdiLoop } from '../bdi/loop.js'
 import { ClaimStore, isClaimMsg } from '../coordination/claims.js'
+import { ContractRuntime, isContractMsg } from '../coordination/contract.js'
 import { TeamMissionView } from '../mission/view.js'
 import { isMission } from '../mission/kinds.js'
 import type { WorkerEnvelope, A2AMessage } from '../types/a2a.js'
@@ -12,6 +13,7 @@ import type { Params } from '../bdi/params.js'
 let log: ReturnType<typeof makeLogger> | null = null
 let blackboard: Blackboard | null = null
 let claims: ClaimStore | null = null
+let contracts: ContractRuntime | null = null
 let missionView: TeamMissionView | null = null
 let booting = false
 
@@ -32,6 +34,7 @@ async function boot(config: Config, params: Params): Promise<void> {
   const client = await connect(config, 'courier', logger)
 
   claims = new ClaimStore()
+  contracts = new ContractRuntime()
 
   missionView = new TeamMissionView()
   const loop = new BdiLoop(client, params, {
@@ -44,6 +47,7 @@ async function boot(config: Config, params: Params): Promise<void> {
   }, {
     view: missionView,
     pursue: false, // Courier honours shapers/zone but never chases the coordinate target (A3)
+    contracts,
   })
   let booted = false
   client.onPerception((snap) => {
@@ -78,6 +82,9 @@ self.onmessage = (event: MessageEvent<WorkerEnvelope>) => {
       if (msg.payload === null) missionView?.set(null)
       else if (isMission(msg.payload)) missionView?.set(msg.payload)
       else log?.debug({ type: msg.type }, 'mission msg dropped — bad payload')
+    } else if (msg.type === 'contract' && isContractMsg(msg.payload)) {
+      const reply = contracts?.applyMsg(msg.payload, 'courier') ?? null
+      if (reply !== null) send({ from: 'courier', to: 'liaison', type: 'contract', payload: reply })
     } else blackboard?.receive(msg)
   }
 }

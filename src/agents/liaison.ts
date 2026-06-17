@@ -3,6 +3,7 @@ import { connect } from '../external/deliveroo.js'
 import { Blackboard } from '../blackboard/blackboard.js'
 import { BdiLoop } from '../bdi/loop.js'
 import { ClaimStore, isClaimMsg } from '../coordination/claims.js'
+import { ContractRuntime, isContractMsg } from '../coordination/contract.js'
 import { MissionSlot } from '../mission/slot.js'
 import { TeamMissionView } from '../mission/view.js'
 import { makeChat } from '../mission/llm.js'
@@ -15,6 +16,7 @@ import type { Params } from '../bdi/params.js'
 let log: ReturnType<typeof makeLogger> | null = null
 let blackboard: Blackboard | null = null
 let claims: ClaimStore | null = null
+let contracts: ContractRuntime | null = null
 let booting = false
 
 function send(msg: A2AMessage): void {
@@ -34,6 +36,7 @@ async function boot(config: Config, params: Params): Promise<void> {
   const client = await connect(config, 'liaison', logger)
 
   claims = new ClaimStore()
+  contracts = new ContractRuntime()
 
   const missionView = new TeamMissionView()
   const missionSlot = new MissionSlot((m) => {
@@ -64,6 +67,7 @@ async function boot(config: Config, params: Params): Promise<void> {
     view: missionView,
     pursue: true,
     onSatisfied: () => missionSlot.supersede(),
+    contracts,
   })
   let booted = false
   client.onPerception((snap) => {
@@ -94,6 +98,9 @@ self.onmessage = (event: MessageEvent<WorkerEnvelope>) => {
     if (msg.type === 'claims' && isClaimMsg(msg.payload)) {
       if (claims !== null) claims.applyMsg(msg.payload, 'liaison')
       else log?.debug({ type: msg.type }, 'claims msg dropped — boot in progress')
+    } else if (msg.type === 'contract' && isContractMsg(msg.payload)) {
+      const reply = contracts?.applyMsg(msg.payload, 'liaison') ?? null
+      if (reply !== null) send({ from: 'liaison', to: 'courier', type: 'contract', payload: reply })
     } else blackboard?.receive(msg)
   }
 }
