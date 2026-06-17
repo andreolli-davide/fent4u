@@ -94,3 +94,13 @@ test('bestSubset with F1 default is unchanged', () => {
   const r = bestSubset(carried, { x: 1, y: 1 }, 0, dcInf, M1, G1, 0)
   expect(r.value).toBe(55)
 })
+
+test('bestSubset returns an empty zero-value bundle (never null) when the filter rejects everything', () => {
+  const dcInf = { rho: 0, lambda: 0, lambdaAgent: 0, decayIntervalTicks: Infinity }
+  const mkc = (id: string, reward: number) => ({ id, pos: { x: 0, y: 0 }, rewardSeen: reward, carriedBy: 'me', lastSeen: 0 })
+  const carried = [mkc('a', 5), mkc('b', 50)] // both non-expiring ⇒ no forced parcels
+  const r = bestSubset(carried, { x: 1, y: 1 }, 0, dcInf, M1, G1, 0, () => false)
+  expect(r).not.toBeNull()
+  expect(r.set).toEqual([])
+  expect(r.value).toBe(0)
+})
