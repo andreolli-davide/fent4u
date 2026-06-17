@@ -23,7 +23,7 @@ export interface RebalanceInput {
   claims: Claim[] // current AUCTION claims (for originD / sunk travel)
   enemies: AgentBelief[]
   zones: Pos[]
-  dist: (a: Pos, b: Pos) => number
+  dist: (a: Pos, b: Pos) => { L: number; toll: number }
   dc: DecayConsts
   params: Params
   tnow: number
@@ -38,8 +38,8 @@ export interface Reassign {
 function weightFor(agent: RebalanceAgent, inp: RebalanceInput): ParcelWeight {
   return (p: ParcelBelief): number => {
     if (p.carriedBy !== null) return 0
-    const threats: EnemyThreat[] = inp.enemies.map((e) => ({ age: inp.tnow - e.lastSeen, dToP: inp.dist(e.pos, p.pos) }))
-    return pAvail(p, inp.dist(agent.pos, p.pos), threats, inp.params.beta_comp, inp.tnow, inp.dc)
+    const threats: EnemyThreat[] = inp.enemies.map((e) => ({ age: inp.tnow - e.lastSeen, dToP: inp.dist(e.pos, p.pos).L }))
+    return pAvail(p, inp.dist(agent.pos, p.pos).L, threats, inp.params.beta_comp, inp.tnow, inp.dc)
   }
 }
 
@@ -66,8 +66,8 @@ export function runRebalance(inp: RebalanceInput): Reassign[] {
       const gainY = routeU(Y, [...Y.claimed, p], inp) - routeU(Y, Y.claimed, inp)
       const lossX = routeU(X, X.claimed, inp) - routeU(X, without, inp)
       const dUteam = gainY - lossX
-      const sunk = Math.max(0, (originD.get(p.id) ?? inp.dist(X.pos, p.pos)) - inp.dist(X.pos, p.pos))
-      const reApproach = inp.dist(Y.pos, p.pos)
+      const sunk = Math.max(0, (originD.get(p.id) ?? inp.dist(X.pos, p.pos).L) - inp.dist(X.pos, p.pos).L)
+      const reApproach = inp.dist(Y.pos, p.pos).L
       // §9.6 switch cost in reward units (rho × ticks). Not normalized by lYafter+1
       // because the plan formula's normalization causes test 2 to wrongly accept transfers
       // with high sunk cost; DESIGN §9.6 leaves the exact magnitude to offline calibration (§16).

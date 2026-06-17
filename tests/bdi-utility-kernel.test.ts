@@ -21,7 +21,7 @@ test('bestZone prefers the nearer zone after en-route decay (§6.0 check)', () =
   // 3 parcels @10, rho=0.05. Zone A d=2; Zone B d=58. Decayed: A wins.
   const parcels = [p('a', 10), p('b', 10), p('c', 10)]
   const zones: Pos[] = [{ x: 2, y: 0 }, { x: 58, y: 0 }]
-  const dist = (_: Pos, z: Pos): number => z.x // distance == x for this fixture
+  const dist = (_: Pos, z: Pos): { L: number; toll: number } => ({ L: z.x, toll: 0 }) // distance == x for this fixture
   const z = bestZone(parcels, { x: 0, y: 0 }, zones, 0, dc, dist, 1.0)
   expect(z?.zone).toEqual({ x: 2, y: 0 })
 })

@@ -94,7 +94,7 @@ export function vValue(parcels: ParcelBelief[], z: Pos, L: number, tnow: number,
   return g(z) * m(parcels.length) * sum
 }
 
-export interface ZonePick { zone: Pos; L: number; rate: number }
+export interface ZonePick { zone: Pos; L: number; toll: number; rate: number }
 
 /**
  * §6.0 value-aware zone selection: argmax of the travel-decayed kernel rate.
@@ -102,13 +102,13 @@ export interface ZonePick { zone: Pos; L: number; rate: number }
  *   unreachable tiles. Infinite-distance zones are skipped; NaN distances are
  *   also skipped (coincidental, not guaranteed).
  */
-export function bestZone(parcels: ParcelBelief[], from: Pos, zones: Pos[], tnow: number, dc: DecayConsts, dist: (a: Pos, b: Pos) => number, alpha: number, m: CountShaper = M1, g: ZoneShaper = G1, filter: BundleFilter = F1): ZonePick | null {
+export function bestZone(parcels: ParcelBelief[], from: Pos, zones: Pos[], tnow: number, dc: DecayConsts, dist: (a: Pos, b: Pos) => { L: number; toll: number }, alpha: number, m: CountShaper = M1, g: ZoneShaper = G1, filter: BundleFilter = F1): ZonePick | null {
   let best: ZonePick | null = null
   for (const z of zones) {
-    const L = dist(from, z)
+    const { L, toll } = dist(from, z)
     if (!Number.isFinite(L)) continue
-    const r = rate(vValue(parcels, z, L, tnow, dc, m, g, undefined, filter), L, alpha)
-    if (best === null || r > best.rate) best = { zone: z, L, rate: r }
+    const r = rate(vValue(parcels, z, L, tnow, dc, m, g, undefined, filter) - toll, L, alpha)
+    if (best === null || r > best.rate) best = { zone: z, L, toll, rate: r }
   }
   return best
 }
