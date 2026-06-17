@@ -126,7 +126,7 @@ export const EMIT_MISSION_FN = {
       abstractIntent: { type: 'string', description: 'One-line restatement of the goal' },
       sub: { type: 'string', enum: ['PRICED', 'ABSOLUTE'], description: 'HARD_CONSTRAINT flavour only' },
       deadline: { type: 'number', description: 'Latest tick to complete, if stated' },
-      params: { type: 'object', description: 'Kind-specific transcribed params (tiles, count→factor map, filter, …)' },
+      params: { type: 'object', description: 'Kind-specific transcribed params. HARD_CONSTRAINT PRICED: priced=[{tile:{tag:"TEXT_BOUND",x,y},toll}]. HARD_CONSTRAINT ABSOLUTE: absolute={kind:"REWARD_THRESHOLD",max} OR {kind:"ZONE",tile:{tag:"TEXT_BOUND",x,y}}. Transcribe ONLY stated literals; never invent coordinates. REWARD_SHAPER: m (count->factor map), g (tile->factor list).' },
     },
     required: ['kind', 'payoff', 'abstractIntent', 'params'],
   },
