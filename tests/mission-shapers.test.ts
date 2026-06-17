@@ -1,7 +1,8 @@
 // tests/mission-shapers.test.ts
 import { test, expect } from 'bun:test'
-import { buildCountShaper, buildZoneShaper, bestSubset } from '../src/mission/shapers.js'
-import { M1, G1, decayConsts } from '../src/bdi/utility.js'
+import { buildCountShaper, buildZoneShaper, bestSubset, buildTolls, buildBundleFilter } from '../src/mission/shapers.js'
+import { M1, G1, decayConsts, type BundleFilter } from '../src/bdi/utility.js'
+import { key } from '../src/planning/astar.js'
 import type { GameConsts } from '../src/types/perception.js'
 import type { ParcelBelief } from '../src/blackboard/beliefs.js'
 
@@ -75,4 +76,64 @@ test('drops zero/negative Rnow parcels; empty carried -> empty bundle', () => {
   expect(bestSubset([], tile, 0, dc, M1, G1, 3).set).toEqual([])
   const b = bestSubset([p('a', 10), p('z', 0)], tile, 0, dc, M1, G1, 3)
   expect(b.set.map((x) => x.id)).toEqual(['a'])
+})
+
+test('bestSubset excludes a parcel that trips a REWARD_THRESHOLD filter', () => {
+  const dcInf = { rho: 0, lambda: 0, lambdaAgent: 0, decayIntervalTicks: Infinity }
+  const mkc = (id: string, reward: number) => ({ id, pos: { x: 0, y: 0 }, rewardSeen: reward, carriedBy: 'me', lastSeen: 0 })
+  const carried = [mkc('a', 5), mkc('b', 50)] // b > 10
+  const overTen: BundleFilter = (S) => S.every((p) => p.rewardSeen <= 10)
+  const r = bestSubset(carried, { x: 1, y: 1 }, 0, dcInf, M1, G1, 0, overTen)
+  expect(r.set.map((p) => p.id)).toEqual(['a'])
+  expect(r.value).toBe(5)
+})
+
+test('bestSubset with F1 default is unchanged', () => {
+  const dcInf = { rho: 0, lambda: 0, lambdaAgent: 0, decayIntervalTicks: Infinity }
+  const mkc = (id: string, reward: number) => ({ id, pos: { x: 0, y: 0 }, rewardSeen: reward, carriedBy: 'me', lastSeen: 0 })
+  const carried = [mkc('a', 5), mkc('b', 50)]
+  const r = bestSubset(carried, { x: 1, y: 1 }, 0, dcInf, M1, G1, 0)
+  expect(r.value).toBe(55)
+})
+
+test('bestSubset returns an empty zero-value bundle (never null) when the filter rejects everything', () => {
+  const dcInf = { rho: 0, lambda: 0, lambdaAgent: 0, decayIntervalTicks: Infinity }
+  const mkc = (id: string, reward: number) => ({ id, pos: { x: 0, y: 0 }, rewardSeen: reward, carriedBy: 'me', lastSeen: 0 })
+  const carried = [mkc('a', 5), mkc('b', 50)] // both non-expiring ⇒ no forced parcels
+  const r = bestSubset(carried, { x: 1, y: 1 }, 0, dcInf, M1, G1, 0, () => false)
+  expect(r).not.toBeNull()
+  expect(r.set).toEqual([])
+  expect(r.value).toBe(0)
+})
+
+test('buildTolls maps TEXT_BOUND priced tiles to toll points; empty when absent', () => {
+  expect(buildTolls(undefined).size).toBe(0)
+  const m = buildTolls([{ tile: { tag: 'TEXT_BOUND', x: 5, y: 2 }, toll: 50 }])
+  expect(m.get(key({ x: 5, y: 2 }))).toBe(50)
+})
+
+test('buildTolls skips RUNTIME_BOUND tiles and non-finite tolls', () => {
+  const m = buildTolls([
+    { tile: { tag: 'RUNTIME_BOUND', rule: 'spawner' }, toll: 50 },
+    { tile: { tag: 'TEXT_BOUND', x: 1, y: 1 }, toll: Number.NaN },
+  ])
+  expect(m.size).toBe(0)
+})
+
+test('buildBundleFilter REWARD_THRESHOLD rejects a bundle with any parcel over max', () => {
+  const f = buildBundleFilter({ kind: 'REWARD_THRESHOLD', max: 10 })
+  const lo = { id: 'a', pos: { x: 0, y: 0 }, rewardSeen: 8, carriedBy: null, lastSeen: 0 }
+  const hi = { id: 'b', pos: { x: 0, y: 0 }, rewardSeen: 20, carriedBy: null, lastSeen: 0 }
+  expect(f([lo], { x: 1, y: 1 })).toBe(true)
+  expect(f([lo, hi], { x: 1, y: 1 })).toBe(false)
+})
+
+test('buildBundleFilter ZONE rejects only the forbidden delivery tile', () => {
+  const f = buildBundleFilter({ kind: 'ZONE', tile: { tag: 'TEXT_BOUND', x: 3, y: 4 } })
+  expect(f([], { x: 3, y: 4 })).toBe(false)
+  expect(f([], { x: 0, y: 0 })).toBe(true)
+})
+
+test('buildBundleFilter identity (F1) when absent', () => {
+  expect(buildBundleFilter(undefined)([], { x: 0, y: 0 })).toBe(true)
 })

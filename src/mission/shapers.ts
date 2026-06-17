@@ -4,11 +4,12 @@
 // exactly. bestSubset (§6.1 argmax + §6.2 expiry floor) lives here too.
 // Imports bdi/utility (NOT bdi/loop): one-way mission -> utility, no cycle, no-hotloop guard stays green.
 
+import { key } from '../planning/astar.js'
 import type { Pos } from '../types/perception.js'
 import { posKey } from '../types/perception.js'
 import type { ParcelBelief } from '../blackboard/beliefs.js'
 import type { MissionParams } from './kinds.js'
-import { M1, G1, rnow, vValue, type CountShaper, type ZoneShaper, type DecayConsts } from '../bdi/utility.js'
+import { M1, G1, F1, rnow, vValue, type CountShaper, type ZoneShaper, type DecayConsts, type BundleFilter } from '../bdi/utility.js'
 
 /** count->factor over |putDown| (§6). Identity (M1) when absent or after filtering empties. */
 export function buildCountShaper(m: MissionParams['m']): CountShaper {
@@ -50,6 +51,7 @@ export function bestSubset(
   m: CountShaper,
   g: ZoneShaper,
   floorTicks: number,
+  filter: BundleFilter = F1,
 ): { set: ParcelBelief[]; value: number } {
   const positive = carried
     .map((p) => ({ p, r: rnow(p, tnow, dc) }))
@@ -58,14 +60,45 @@ export function bestSubset(
   if (positive.length === 0) return { set: [], value: 0 }
 
   const forced = positive.filter((x) => x.r - dc.rho * floorTicks <= 0).map((x) => x.p)
-  const optional = positive.filter((x) => x.r - dc.rho * floorTicks > 0).map((x) => x.p)
+  // Pre-drop singleton-invalid optionals: the prefix-only argmax below can't skip a high-Rnow
+  // violator, so without this a valid low-reward subset (e.g. [a] when [b] violates) is
+  // unreachable (§7.2). FORCED parcels deliberately bypass this — a forced violator must zero
+  // the whole bundle via vValue's set-level filter (§7.3 worst-case), not be silently dropped.
+  const optional = positive
+    .filter((x) => x.r - dc.rho * floorTicks > 0)
+    .filter((x) => filter([x.p], tile))
+    .map((x) => x.p)
 
   let best: { set: ParcelBelief[]; value: number } | null = null
   for (let j = 0; j <= optional.length; j++) {
     const set = [...forced, ...optional.slice(0, j)]
     if (set.length === 0) continue
-    const value = vValue(set, tile, 0, tnow, dc, m, g)
+    const value = vValue(set, tile, 0, tnow, dc, m, g, undefined, filter)
     if (best === null || value > best.value) best = { set, value }
   }
-  return best!
+  return best ?? { set: [], value: 0 }
+}
+
+/** §7.1 priced tiles -> tileKey->toll points. TEXT_BOUND + finite only; empty when absent. */
+export function buildTolls(priced: MissionParams['priced']): Map<string, number> {
+  const out = new Map<string, number>()
+  if (priced === undefined) return out
+  for (const e of priced) {
+    if (e.tile.tag !== 'TEXT_BOUND') continue
+    if (!Number.isFinite(e.toll)) continue
+    out.set(key({ x: e.tile.x, y: e.tile.y }), e.toll)
+  }
+  return out
+}
+
+/** §7.2 absolute constraint -> BundleFilter. Identity (F1) when absent. */
+export function buildBundleFilter(absolute: MissionParams['absolute']): BundleFilter {
+  if (absolute === undefined) return F1
+  if (absolute.kind === 'REWARD_THRESHOLD') {
+    const max = absolute.max
+    return (S) => S.every((p) => p.rewardSeen <= max) // §7.3 worst-case: any over-max voids all
+  }
+  if (absolute.tile.tag !== 'TEXT_BOUND') return F1 // RUNTIME_BOUND deferred this slice
+  const forbidden = key({ x: absolute.tile.x, y: absolute.tile.y })
+  return (_S, z) => key(z) !== forbidden
 }
