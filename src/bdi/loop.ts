@@ -80,7 +80,12 @@ export class BdiLoop {
     // §7.1 c_tick uses SELF's carried bundle (the decay self incurs on its own detour) — NOT
     // carriedOf(), which is the partner's bundle. Reused as the route candidate set below.
     const selfCarried = beliefs.self.carrying.map((id) => beliefs.parcels.get(id)).filter((p): p is ParcelBelief => p !== undefined)
-    const cTick = this.dc.rho * selfCarried.filter((p) => rnow(p, tnow, this.dc) > 0).length + this.rateTracker.uForgone()
+    // §7.1: c_tick MUST stay strictly positive, floored at the bootstrap rate. Empty hands give a
+    // 0 decay term, and repeated forfeited (0-value, §7.3) deliveries can drag uForgone() to 0 —
+    // a 0 c_tick collapses each A* step cost to its bare toll, so a tolled goal gets an unbounded
+    // dodge detour that overruns budgetMs and is then misreported as unreachable. The floor bounds
+    // the detour. Inert in base play: with no HARD_CONSTRAINT mission, tolls is empty ⇒ pure-tick.
+    const cTick = Math.max(this.params.rate_bootstrap, this.dc.rho * selfCarried.filter((p) => rnow(p, tnow, this.dc) > 0).length + this.rateTracker.uForgone())
     const planCtx = { ...ctx, tolls, cTick }
     // Per-tick memo: planCtx is fixed for the tick, and route/auction/rebalance/explore all
     // re-query the same (a,b) pairs many times (bestInsert is O(n²) in dist calls). Keyed
