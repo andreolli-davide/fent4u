@@ -60,6 +60,7 @@ export type ContractAction =
   | { kind: 'post'; milestone: string }
   | { kind: 'block' }
   | { kind: 'done' }
+  | { kind: 'gated' } // §8.5 SYNC_GATE: staging complete — hand control back to gated base play
   | { kind: 'pickup'; ids: string[]; post: string }
   | { kind: 'putdown'; ids: string[]; post: string; onDelivery: boolean }
 
@@ -86,7 +87,10 @@ export function advance(c: Contract, me: AgentId, self: Pos): ContractAction {
   // the partner finishes (the handoff picker waits after vacating until the deliverer scores). In
   // rendezvous both LOCALs posted ⇒ all-posted ⇒ done for both, so this is backward-compatible.
   const allPosted = c.steps.every((s) => s.kind === 'BARRIER' || c.posted[s.post])
-  return allPosted ? { kind: 'done' } : { kind: 'block' }
+  // §8.5: a SYNC_GATE never terminates on its own — past staging it perpetually yields control to
+  // gated base play. Every other type completes when all its milestones are posted (§8.1).
+  if (allPosted) return c.type === 'SYNC_GATE' ? { kind: 'gated' } : { kind: 'done' }
+  return { kind: 'block' }
 }
 
 // The contract sub-protocol carried in A2AMessage.payload on the `type:'contract'` channel.
@@ -189,6 +193,32 @@ export function rendezvousContract(
       { kind: 'LOCAL', agent: 'liaison', goal, post: 'liaison_ready' },
       { kind: 'LOCAL', agent: 'courier', goal, post: 'courier_ready' },
       { kind: 'BARRIER', needs: ['liaison_ready', 'courier_ready'] },
+    ],
+    posted: {},
+    payoff,
+    deadline,
+    status: 'PROPOSED',
+  }
+}
+
+// §8.5 SYNC_GATE: both stage into the meet zone (reusing the rendezvous staging shape), then the
+// barrier releases into a perpetual GATED phase governed by the gate flag — NOT another step list.
+// No parcels, no roles, no MISSION lock; "odd-row" parity staging (§8.5 example) is a follow-on.
+export function syncGateContract(
+  id: string,
+  target: Pos,
+  radius: number,
+  payoff: number,
+  deadline: number,
+): Contract {
+  const goal = { kind: 'IN_ZONE' as const, center: target, radius }
+  return {
+    id,
+    type: 'SYNC_GATE',
+    steps: [
+      { kind: 'LOCAL', agent: 'liaison', goal, post: 'l_staged' },
+      { kind: 'LOCAL', agent: 'courier', goal, post: 'c_staged' },
+      { kind: 'BARRIER', needs: ['l_staged', 'c_staged'] },
     ],
     posted: {},
     payoff,
