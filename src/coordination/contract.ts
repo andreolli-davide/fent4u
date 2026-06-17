@@ -30,11 +30,14 @@ export function navTarget(goal: LocalGoal): Pos {
   return goal.kind === 'AT_TILE' ? goal.tile : goal.center
 }
 
-// A single step in the contract's plan. Both agents hold the SAME list; each executes only
-// its own LOCAL steps and blocks on every BARRIER (§8.1). (ACTION steps land in the handoff plan.)
+// A single step in the contract's plan. Both agents hold the SAME list; each executes only its
+// own LOCAL/ACTION steps and blocks on every BARRIER (§8.1). An ACTION is an atomic game primitive
+// fired at tile `at` with EXPLICIT ids (§8.3 rule 1 — never dump base-play parcels on the corridor);
+// `onDelivery` marks the deliverer's scoring putDown (selects the belief update in the loop).
 export type Step =
   | { kind: 'LOCAL'; agent: AgentId; goal: LocalGoal; post: string }
   | { kind: 'BARRIER'; needs: string[] }
+  | { kind: 'ACTION'; agent: AgentId; primitive: 'pickUp' | 'putDown'; ids: string[]; at: Pos; post: string; onDelivery?: boolean }
 
 export interface Contract {
   id: string
@@ -44,6 +47,8 @@ export interface Contract {
   payoff: number
   deadline: number
   status: ContractStatus
+  lockOwner?: AgentId      // §9.10 — the single party that installs MISSION locks (handoff picker)
+  lockParcels?: string[]   // §9.10 — parcels the contract MISSION-locks for its life
 }
 
 // What THIS agent should do for the contract this tick. Pure. Rescans from step 0 every call:
@@ -54,6 +59,8 @@ export type ContractAction =
   | { kind: 'post'; milestone: string }
   | { kind: 'block' }
   | { kind: 'done' }
+  | { kind: 'pickup'; ids: string[]; post: string }
+  | { kind: 'putdown'; ids: string[]; post: string; onDelivery: boolean }
 
 export function advance(c: Contract, me: AgentId, self: Pos): ContractAction {
   for (const s of c.steps) {
@@ -61,12 +68,24 @@ export function advance(c: Contract, me: AgentId, self: Pos): ContractAction {
       if (s.needs.every((m) => c.posted[m])) continue // released → fall through to later steps
       return { kind: 'block' }
     }
-    if (s.agent !== me) continue        // not my LOCAL → skip (the partner runs it)
-    if (c.posted[s.post]) continue      // my milestone already reached → advance
-    if (goalSatisfied(s.goal, self)) return { kind: 'post', milestone: s.post }
-    return { kind: 'navigate', to: navTarget(s.goal) }
+    if (s.agent !== me) continue   // not my step → skip (the partner runs it)
+    if (c.posted[s.post]) continue // my milestone already reached → advance
+    if (s.kind === 'LOCAL') {
+      if (goalSatisfied(s.goal, self)) return { kind: 'post', milestone: s.post }
+      return { kind: 'navigate', to: navTarget(s.goal) }
+    }
+    // s.kind === 'ACTION' — self-navigate to the action tile, then fire the primitive.
+    if (self.x !== s.at.x || self.y !== s.at.y) return { kind: 'navigate', to: s.at }
+    return s.primitive === 'pickUp'
+      ? { kind: 'pickup', ids: s.ids, post: s.post }
+      : { kind: 'putdown', ids: s.ids, post: s.post, onDelivery: s.onDelivery ?? false }
   }
-  return { kind: 'done' }
+  // Fell through: every barrier released and every step of MINE posted. The contract is SATISFIED
+  // only when EVERY non-barrier milestone is posted (mine AND the partner's) — otherwise hold while
+  // the partner finishes (the handoff picker waits after vacating until the deliverer scores). In
+  // rendezvous both LOCALs posted ⇒ all-posted ⇒ done for both, so this is backward-compatible.
+  const allPosted = c.steps.every((s) => s.kind === 'BARRIER' || c.posted[s.post])
+  return allPosted ? { kind: 'done' } : { kind: 'block' }
 }
 
 // The contract sub-protocol carried in A2AMessage.payload on the `type:'contract'` channel.
