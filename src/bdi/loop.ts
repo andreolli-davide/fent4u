@@ -9,6 +9,7 @@ import { buildRoute, uRoute, routeFromClaims } from './route.js'
 import { select, chooseExplore, matches, type Intention, type Candidate } from './intentions.js'
 import type { Params } from './params.js'
 import { ClaimStore, type ClaimMsg, type Claim } from '../coordination/claims.js'
+import { advance, type Contract, type ContractMsg, type ContractRuntime } from '../coordination/contract.js'
 import { runAuction, type AgentSnap } from '../coordination/auction.js'
 import { runRebalance, type RebalanceAgent } from '../coordination/rebalance.js'
 import type { A2AMessage, AgentId } from '../types/a2a.js'
@@ -42,7 +43,7 @@ export class BdiLoop {
     private readonly log: LogFn,
     private readonly claims: ClaimStore = new ClaimStore(),
     private readonly coord?: { partner: AgentId; send: (msg: A2AMessage) => void },
-    private readonly mission?: { view: TeamMissionView; pursue: boolean; onSatisfied?: () => void },
+    private readonly mission?: { view: TeamMissionView; pursue: boolean; onSatisfied?: () => void; contracts?: ContractRuntime },
   ) {
     this.grid = buildGrid(client.map)
     this.dc = decayConsts(client.consts)
@@ -99,6 +100,17 @@ export class BdiLoop {
       const v = { L: r.L, toll: r.tollSum }
       distMemo.set(k, v)
       return v
+    }
+
+    // §8 — a COMMITTED contract preempts base play. Adoption is a one-time decision (§8.6); once
+    // ACTIVE the contract is executed directly, NOT re-bid against route/explore each tick. This
+    // returns before the auction/argmax so a contracted agent does no base-play allocation.
+    const activeContract = this.mission?.contracts?.active() ?? null
+    if (activeContract !== null) {
+      await this.actContract(activeContract, beliefs, planCtx, tnow)
+      this.prevSelf = self
+      this.log.debug({ durationMs: performance.now() - t0, tick: tnow, contract: activeContract.id }, 'tick (contract)')
+      return
     }
 
     // §9.7: coordination (auction/rebalance/pool) must read SHARED state only. The only
@@ -284,6 +296,39 @@ export class BdiLoop {
       if (pa > 0) { pool.push(p); weight.set(p.id, pa) }
     }
     return { pool, weight }
+  }
+
+  // Execute one contract step for this agent (§8.1): navigate toward the milestone, post on
+  // arrival, hold while blocked at a barrier, or complete when the final barrier releases.
+  private async actContract(c: Contract, beliefs: BeliefBase, ctx: PlanCtx, tnow: number): Promise<void> {
+    const self = beliefs.self.pos
+    const me = this.client.role
+    const action = advance(c, me, self)
+    if (action.kind === 'navigate') {
+      const dir = await this.stepToward(beliefs, ctx, self, action.to)
+      this.log.debug({ tick: tnow, pos: self, contract: c.id, action: 'navigate', to: action.to, dir }, 'contract')
+      return
+    }
+    if (action.kind === 'post') {
+      const msg = this.mission!.contracts!.post(action.milestone)
+      if (msg !== null) this.sendContract(msg)
+      this.log.info({ tick: tnow, contract: c.id, milestone: action.milestone }, 'contract milestone posted')
+      return
+    }
+    if (action.kind === 'done') {
+      const msg = this.mission!.contracts!.complete()
+      if (msg !== null) this.sendContract(msg)
+      this.mission?.onSatisfied?.()
+      this.log.info({ tick: tnow, contract: c.id, status: 'SATISFIED' }, 'contract satisfied')
+      return
+    }
+    // action.kind === 'block' — hold position at the barrier (no move this tick).
+    this.log.debug({ tick: tnow, pos: self, contract: c.id, action: 'block' }, 'contract')
+  }
+
+  private sendContract(msg: ContractMsg): void {
+    if (!this.coord) return
+    this.coord.send({ from: this.client.role, to: this.coord.partner, type: 'contract', payload: msg })
   }
 
   private async act(chosen: Intention, beliefs: BeliefBase, ctx: PlanCtx, tnow: number): Promise<void> {
