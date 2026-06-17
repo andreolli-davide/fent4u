@@ -7,7 +7,7 @@ import type { Pos } from '../types/perception.js'
 import type { ParcelBelief } from '../blackboard/beliefs.js'
 import type { Grid } from '../planning/astar.js'
 import type { Mission } from '../mission/kinds.js'
-import { bindHandoff, handoffContract, rendezvousContract, type Contract } from './contract.js'
+import { bindHandoff, handoffContract, rendezvousContract, syncGateContract, type Contract } from './contract.js'
 
 export interface AgentRef { id: AgentId; pos: Pos }
 
@@ -88,6 +88,11 @@ export function buildContract(mission: Mission, grid: Grid, ctx: BuildCtx): Cont
       const target = rendezvousTarget(mission, grid)
       if (target === null) return null
       return rendezvousContract(`${mission.id}:RENDEZVOUS`, target, RENDEZVOUS_RADIUS, mission.payoff, deadline)
+    }
+    case 'SYNC_GATE': {
+      const target = rendezvousTarget(mission, grid)
+      if (target === null) return null
+      return syncGateContract(`${mission.id}:SYNC_GATE`, target, RENDEZVOUS_RADIUS, mission.payoff, deadline)
     }
     default:
       return null
