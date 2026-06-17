@@ -1,7 +1,8 @@
 // src/coordination/contract.ts
 // DESIGN §8 — the generic coordination-contract primitive. One step list of LOCALs and
 // barriers, run by BOTH agents, advanced by shared monotonic `posted` bookkeeping (§8.1).
-// This slice implements the RENDEZVOUS template only (single barrier, no parcels).
+// Implements all three templates: RENDEZVOUS (positional barrier), HANDOFF (cross-agent
+// parcel delivery via ACTION steps + MISSION lock), and SYNC_GATE (freshness-checked gate overlay).
 import type { AgentId } from '../types/a2a.js'
 import type { Pos } from '../types/perception.js'
 import type { Grid } from '../planning/astar.js'
@@ -60,6 +61,7 @@ export type ContractAction =
   | { kind: 'post'; milestone: string }
   | { kind: 'block' }
   | { kind: 'done' }
+  | { kind: 'gated' } // §8.5 SYNC_GATE: staging complete — hand control back to gated base play
   | { kind: 'pickup'; ids: string[]; post: string }
   | { kind: 'putdown'; ids: string[]; post: string; onDelivery: boolean }
 
@@ -86,7 +88,10 @@ export function advance(c: Contract, me: AgentId, self: Pos): ContractAction {
   // the partner finishes (the handoff picker waits after vacating until the deliverer scores). In
   // rendezvous both LOCALs posted ⇒ all-posted ⇒ done for both, so this is backward-compatible.
   const allPosted = c.steps.every((s) => s.kind === 'BARRIER' || c.posted[s.post])
-  return allPosted ? { kind: 'done' } : { kind: 'block' }
+  // §8.5: a SYNC_GATE never terminates on its own — past staging it perpetually yields control to
+  // gated base play. Every other type completes when all its milestones are posted (§8.1).
+  if (allPosted) return c.type === 'SYNC_GATE' ? { kind: 'gated' } : { kind: 'done' }
+  return { kind: 'block' }
 }
 
 // The contract sub-protocol carried in A2AMessage.payload on the `type:'contract'` channel.
@@ -117,6 +122,21 @@ export function isContractMsg(p: unknown): p is ContractMsg {
   }
 }
 
+// §8.5 close-latency guard: an OPEN gate older than this many ticks reads CLOSED (fail-safe to STOP
+// under uncertainty — a late "red" must never license a move). Carried on the dedicated 'gate' channel.
+export const GATE_STALE_TTL = 5
+
+// The gate sub-protocol on the `type:'gate'` a2a channel (separate from 'contract'). `tick` is the
+// heartbeat stamp the freshness check reads. Externally originated (server red/green); this slice
+// routes + applies it, the live source is a follow-on seam.
+export type GateMsg = { id: string; state: 'OPEN' | 'CLOSED'; tick: number }
+
+export function isGateMsg(p: unknown): p is GateMsg {
+  if (typeof p !== 'object' || p === null) return false
+  const m = p as Record<string, unknown>
+  return typeof m.id === 'string' && (m.state === 'OPEN' || m.state === 'CLOSED') && typeof m.tick === 'number'
+}
+
 // Owns the single active contract for ONE agent (mirrors MissionSlot's single-slot rule, §4.3)
 // and applies the `'contract'` a2a sub-protocol. Both replicas converge because the full
 // contract ships in `propose` and every milestone is replicated via `post` (§8.1). This slice
@@ -124,12 +144,21 @@ export function isContractMsg(p: unknown): p is ContractMsg {
 export class ContractRuntime {
   private c: Contract | null = null
 
+  // §8.5 gate flag — lifetime = the active SYNC_GATE contract. Default OPEN so it is inert outside a
+  // SYNC_GATE (gate scoping: callers only consult gateOpen() while a SYNC_GATE contract is ACTIVE).
+  private gate: { state: 'OPEN' | 'CLOSED'; heartbeat: number } = { state: 'OPEN', heartbeat: 0 }
+
+  // heartbeat: 0 is the "never-stamped" sentinel — gateOpen() treats it as perpetually fresh so the
+  // gate is inert (always OPEN) until the first explicit setGate/applyGate stamp arrives.
+  private resetGate(): void { this.gate = { state: 'OPEN', heartbeat: 0 } }
+
   current(): Contract | null { return this.c }
   active(): Contract | null { return this.c?.status === 'ACTIVE' ? this.c : null }
 
   // Liaison side: install PROPOSED and return the msg to broadcast. Goes ACTIVE on the accept.
   propose(contract: Contract): ContractMsg {
     this.c = { ...contract, status: 'PROPOSED' }
+    this.resetGate()
     return { kind: 'propose', contract: this.c }
   }
 
@@ -146,7 +175,41 @@ export class ContractRuntime {
     const id = this.c.id
     this.c.status = 'SATISFIED'
     this.c = null
+    this.resetGate()
     return { kind: 'teardown', id, status: 'SATISFIED' }
+  }
+
+  // OPEN and fresh (§8.5): a stale heartbeat reads CLOSED. heartbeat===0 is the "never-stamped"
+  // sentinel (set by resetGate) — treated as perpetually fresh so the gate is inert until armed.
+  // Callers arm this only under a live SYNC_GATE.
+  gateOpen(now: number): boolean {
+    if (this.gate.state !== 'OPEN') return false
+    if (this.gate.heartbeat === 0) return true  // sentinel: not yet stamped → always fresh
+    return now - this.gate.heartbeat <= GATE_STALE_TTL
+  }
+
+  // Origination (Liaison): set the gate locally and return the msg to broadcast on the 'gate' channel.
+  setGate(state: 'OPEN' | 'CLOSED', tick: number): GateMsg | null {
+    if (this.c === null) return null
+    this.gate = { state, heartbeat: tick }
+    return { id: this.c.id, state, tick }
+  }
+
+  // Replication: apply an inbound gate msg for THIS contract, monotonic in tick (a late stamp is dropped).
+  applyGate(msg: GateMsg): void {
+    if (this.c !== null && this.c.id === msg.id && msg.tick >= this.gate.heartbeat) {
+      this.gate = { state: msg.state, heartbeat: msg.tick }
+    }
+  }
+
+  // §8.5 partner-loss / barrier-deadline failure: mark FAILED, clear the slot, disarm the gate.
+  fail(): ContractMsg | null {
+    if (this.c === null) return null
+    const id = this.c.id
+    this.c.status = 'FAILED'
+    this.c = null
+    this.resetGate()
+    return { kind: 'teardown', id, status: 'FAILED' }
   }
 
   // Apply an inbound a2a msg; returns an optional reply for the caller to broadcast.
@@ -157,6 +220,7 @@ export class ContractRuntime {
         // Receiver (Courier) accepts immediately → ACTIVE. Adoption gating is the proposer's
         // responsibility (§8.6), deferred this slice, so acceptance is unconditional.
         this.c = { ...msg.contract, status: 'ACTIVE' }
+        this.resetGate()
         return { kind: 'accept', id: msg.contract.id }
       case 'accept':
         if (this.c !== null && this.c.id === msg.id) this.c.status = 'ACTIVE'
@@ -165,7 +229,7 @@ export class ContractRuntime {
         if (this.c !== null && this.c.id === msg.id) this.c.posted[msg.milestone] = true
         return null
       case 'teardown':
-        if (this.c !== null && this.c.id === msg.id) this.c = null
+        if (this.c !== null && this.c.id === msg.id) { this.c = null; this.resetGate() }
         return null
     }
   }
@@ -189,6 +253,32 @@ export function rendezvousContract(
       { kind: 'LOCAL', agent: 'liaison', goal, post: 'liaison_ready' },
       { kind: 'LOCAL', agent: 'courier', goal, post: 'courier_ready' },
       { kind: 'BARRIER', needs: ['liaison_ready', 'courier_ready'] },
+    ],
+    posted: {},
+    payoff,
+    deadline,
+    status: 'PROPOSED',
+  }
+}
+
+// §8.5 SYNC_GATE: both stage into the meet zone (reusing the rendezvous staging shape), then the
+// barrier releases into a perpetual GATED phase governed by the gate flag — NOT another step list.
+// No parcels, no roles, no MISSION lock; "odd-row" parity staging (§8.5 example) is a follow-on.
+export function syncGateContract(
+  id: string,
+  target: Pos,
+  radius: number,
+  payoff: number,
+  deadline: number,
+): Contract {
+  const goal = { kind: 'IN_ZONE' as const, center: target, radius }
+  return {
+    id,
+    type: 'SYNC_GATE',
+    steps: [
+      { kind: 'LOCAL', agent: 'liaison', goal, post: 'l_staged' },
+      { kind: 'LOCAL', agent: 'courier', goal, post: 'c_staged' },
+      { kind: 'BARRIER', needs: ['l_staged', 'c_staged'] },
     ],
     posted: {},
     payoff,
