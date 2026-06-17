@@ -4,6 +4,7 @@
 // exactly. bestSubset (§6.1 argmax + §6.2 expiry floor) lives here too.
 // Imports bdi/utility (NOT bdi/loop): one-way mission -> utility, no cycle, no-hotloop guard stays green.
 
+import { key } from '../planning/astar.js'
 import type { Pos } from '../types/perception.js'
 import { posKey } from '../types/perception.js'
 import type { ParcelBelief } from '../blackboard/beliefs.js'
@@ -76,4 +77,28 @@ export function bestSubset(
     if (best === null || value > best.value) best = { set, value }
   }
   return best ?? { set: [], value: 0 }
+}
+
+/** §7.1 priced tiles -> tileKey->toll points. TEXT_BOUND + finite only; empty when absent. */
+export function buildTolls(priced: MissionParams['priced']): Map<string, number> {
+  const out = new Map<string, number>()
+  if (priced === undefined) return out
+  for (const e of priced) {
+    if (e.tile.tag !== 'TEXT_BOUND') continue
+    if (!Number.isFinite(e.toll)) continue
+    out.set(key({ x: e.tile.x, y: e.tile.y }), e.toll)
+  }
+  return out
+}
+
+/** §7.2 absolute constraint -> BundleFilter. Identity (F1) when absent. */
+export function buildBundleFilter(absolute: MissionParams['absolute']): BundleFilter {
+  if (absolute === undefined) return F1
+  if (absolute.kind === 'REWARD_THRESHOLD') {
+    const max = absolute.max
+    return (S) => S.every((p) => p.rewardSeen <= max) // §7.3 worst-case: any over-max voids all
+  }
+  if (absolute.tile.tag !== 'TEXT_BOUND') return F1 // RUNTIME_BOUND deferred this slice
+  const forbidden = key({ x: absolute.tile.x, y: absolute.tile.y })
+  return (_S, z) => key(z) !== forbidden
 }

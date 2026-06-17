@@ -33,10 +33,14 @@ export interface MissionParams {
   rule?: string
   m?: Record<string, number> // REWARD_SHAPER count→factor
   g?: Array<{ tile: TileSlot; factor: number }> // REWARD_SHAPER tile→factor
-  tile?: TileSlot // HARD_CONSTRAINT
-  filter?: string // HARD_CONSTRAINT absolute
+  tile?: TileSlot // HARD_CONSTRAINT (legacy, back-compat)
+  filter?: string // HARD_CONSTRAINT absolute (legacy, back-compat)
   contractType?: string // COORDINATION_CONTRACT
   condition?: string
+  priced?: Array<{ tile: TileSlot; toll: number }> // §7.1 PRICED
+  absolute?:
+    | { kind: 'REWARD_THRESHOLD'; max: number } // §7.2 — any parcel reward > max voids the bundle
+    | { kind: 'ZONE'; tile: TileSlot }          // §7.2 — delivering at this tile voids the bundle
 }
 
 // What the LLM emits via emit_mission (no id/rawText/status).
