@@ -1,7 +1,7 @@
 // tests/mission-shapers.test.ts
 import { test, expect } from 'bun:test'
 import { buildCountShaper, buildZoneShaper, bestSubset } from '../src/mission/shapers.js'
-import { M1, G1, decayConsts } from '../src/bdi/utility.js'
+import { M1, G1, decayConsts, type BundleFilter } from '../src/bdi/utility.js'
 import type { GameConsts } from '../src/types/perception.js'
 import type { ParcelBelief } from '../src/blackboard/beliefs.js'
 
@@ -75,4 +75,22 @@ test('drops zero/negative Rnow parcels; empty carried -> empty bundle', () => {
   expect(bestSubset([], tile, 0, dc, M1, G1, 3).set).toEqual([])
   const b = bestSubset([p('a', 10), p('z', 0)], tile, 0, dc, M1, G1, 3)
   expect(b.set.map((x) => x.id)).toEqual(['a'])
+})
+
+test('bestSubset excludes a parcel that trips a REWARD_THRESHOLD filter', () => {
+  const dcInf = { rho: 0, lambda: 0, lambdaAgent: 0, decayIntervalTicks: Infinity }
+  const mkc = (id: string, reward: number) => ({ id, pos: { x: 0, y: 0 }, rewardSeen: reward, carriedBy: 'me', lastSeen: 0 })
+  const carried = [mkc('a', 5), mkc('b', 50)] // b > 10
+  const overTen: BundleFilter = (S) => S.every((p) => p.rewardSeen <= 10)
+  const r = bestSubset(carried, { x: 1, y: 1 }, 0, dcInf, M1, G1, 0, overTen)
+  expect(r.set.map((p) => p.id)).toEqual(['a'])
+  expect(r.value).toBe(5)
+})
+
+test('bestSubset with F1 default is unchanged', () => {
+  const dcInf = { rho: 0, lambda: 0, lambdaAgent: 0, decayIntervalTicks: Infinity }
+  const mkc = (id: string, reward: number) => ({ id, pos: { x: 0, y: 0 }, rewardSeen: reward, carriedBy: 'me', lastSeen: 0 })
+  const carried = [mkc('a', 5), mkc('b', 50)]
+  const r = bestSubset(carried, { x: 1, y: 1 }, 0, dcInf, M1, G1, 0)
+  expect(r.value).toBe(55)
 })
