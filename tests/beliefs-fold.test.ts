@@ -174,3 +174,38 @@ test('applyDrop nulls carriedBy and repositions at drop tile', () => {
   expect(b.parcels.get('p1')?.pos).toEqual({ x: 3, y: 3 })
   expect(b.self.carrying).toEqual([])
 })
+
+// §8.3 handoff-contract: never-perceived parcel must be recorded by the deliverer
+
+test('ensureParcel + applyPickup records carriage for a never-perceived parcel', () => {
+  const b = new BeliefBase(SELF0, CONSTS, MAP)
+  // p1 is never folded/perceived — the deliverer's OBS range never covered the staging tile
+  b.ensureParcel('p1', { x: 1, y: 0 }, 5)
+  b.applyPickup(['p1'])
+  // parcel must now be known and carried by self
+  const p = b.parcels.get('p1')
+  expect(p).toBeDefined()
+  expect(p?.carriedBy).toBe('me')
+  expect(b.self.carrying).toContain('p1')
+})
+
+test('applyDelivery removes a parcel that was introduced via ensureParcel', () => {
+  const b = new BeliefBase(SELF0, CONSTS, MAP)
+  b.ensureParcel('p1', { x: 1, y: 0 }, 5)
+  b.applyPickup(['p1'])
+  b.applyDelivery(['p1'])
+  // parcel must be gone
+  expect(b.parcels.has('p1')).toBe(false)
+  expect(b.self.carrying).toEqual([])
+})
+
+test('ensureParcel is idempotent — does not overwrite an already-perceived parcel', () => {
+  const b = new BeliefBase(SELF0, CONSTS, MAP)
+  // fold a real perception first (rewardSeen = 42)
+  b.foldPerception(snap({ parcels: [{ id: 'p1', pos: { x: 6, y: 5 }, reward: 42, carriedBy: null }] }))
+  // now call ensureParcel — must NOT overwrite rewardSeen or pos
+  b.ensureParcel('p1', { x: 9, y: 9 }, 200)
+  const p = b.parcels.get('p1')
+  expect(p?.rewardSeen).toBe(42)
+  expect(p?.pos).toEqual({ x: 6, y: 5 })
+})
