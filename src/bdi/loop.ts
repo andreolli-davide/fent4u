@@ -36,6 +36,7 @@ export class BdiLoop {
   private lastRebalanceTick = -Infinity
   private prevOwnClaims = 0 // own-claim count last tick — for the route-finished falling edge (§9.6)
   private prevSelf: Pos | null = null // self pos folded last tick == value last shipped to partner; the SHARED self pos for coordination (§9.7)
+  private readonly contractLocks = new Set<string>() // §9.10 — MISSION-lock ids this loop installed
 
   constructor(
     private readonly client: DeliverooClient,
@@ -101,6 +102,12 @@ export class BdiLoop {
       distMemo.set(k, v)
       return v
     }
+
+    // §9.10 — MISSION-lock reconcile (level-triggered, idempotent). The picker (lockOwner) installs
+    // the active contract's lockParcels as origin:'MISSION' claims; teardown (no active contract I
+    // own) releases them. Runs BEFORE the contract short-circuit so a release tick still falls
+    // through to base play.
+    this.reconcileContractLocks(tnow)
 
     // §8 — a COMMITTED contract preempts base play. Adoption is a one-time decision (§8.6); once
     // ACTIVE the contract is executed directly, NOT re-bid against route/explore each tick. This
@@ -309,6 +316,28 @@ export class BdiLoop {
       this.log.debug({ tick: tnow, pos: self, contract: c.id, action: 'navigate', to: action.to, dir }, 'contract')
       return
     }
+    if (action.kind === 'pickup' || action.kind === 'putdown') {
+      this.acting = true
+      try {
+        if (action.kind === 'pickup') {
+          await this.client.pickup()
+          for (const id of action.ids) beliefs.ensureParcel(id, self, tnow)
+          beliefs.applyPickup(action.ids)
+        } else {
+          await this.client.putdown(action.ids)
+          // A scoring delivery removes the parcel; a non-delivery drop leaves it on the ground at
+          // `self` (= the ACTION tile, since advance emits putdown only when self === at). §8.3.
+          if (action.onDelivery) beliefs.applyDelivery(action.ids)
+          else beliefs.applyDrop(action.ids, self)
+        }
+      } finally {
+        this.acting = false
+      }
+      const msg = this.mission!.contracts!.post(action.post)
+      if (msg !== null) this.sendContract(msg)
+      this.log.info({ tick: tnow, contract: c.id, action: action.kind, ids: action.ids, post: action.post }, 'contract action')
+      return
+    }
     if (action.kind === 'post') {
       const msg = this.mission!.contracts!.post(action.milestone)
       if (msg !== null) this.sendContract(msg)
@@ -329,6 +358,35 @@ export class BdiLoop {
   private sendContract(msg: ContractMsg): void {
     if (!this.coord) return
     this.coord.send({ from: this.client.role, to: this.coord.partner, type: 'contract', payload: msg })
+  }
+
+  // §9.10 producer. MISSION claims never expire (ClaimStore.expire) and never rebalance
+  // (rebalance.ts), so originD/lastD are inert here (set 0). Single writer: only the lockOwner
+  // (handoff picker) installs, so there is no claim race; the partner's replica receives the lock
+  // over the 'claims' channel and its auction/rebalance already exclude origin==='MISSION'.
+  private reconcileContractLocks(tnow: number): void {
+    const c = this.mission?.contracts?.active() ?? null
+    const me = this.client.role
+    if (c !== null && c.lockOwner === me) {
+      for (const id of c.lockParcels ?? []) {
+        if (this.contractLocks.has(id)) continue
+        const claim: Claim = { parcelId: id, agentId: me, origin: 'MISSION', epoch: tnow, commitTick: tnow, originD: 0, lastD: 0, lastProgressTick: tnow }
+        this.claims.add(claim)
+        this.broadcast({ kind: 'claim', claim })
+        this.contractLocks.add(id)
+        this.log.info({ tick: tnow, contract: c.id, parcelId: id }, 'MISSION lock installed')
+      }
+      return
+    }
+    // No active contract I own → release every lock I installed (teardown, §4.3).
+    if (this.contractLocks.size > 0) {
+      for (const id of [...this.contractLocks].sort()) {
+        this.claims.remove(id)
+        this.broadcast({ kind: 'release', parcelId: id, epoch: tnow })
+        this.log.info({ tick: tnow, parcelId: id }, 'MISSION lock released')
+      }
+      this.contractLocks.clear()
+    }
   }
 
   private async act(chosen: Intention, beliefs: BeliefBase, ctx: PlanCtx, tnow: number): Promise<void> {

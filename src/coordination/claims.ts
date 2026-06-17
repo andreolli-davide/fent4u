@@ -4,7 +4,7 @@
 // routes are derived from them (§2.3.2) and never published.
 import type { AgentId } from '../types/a2a.js'
 
-export type ClaimOrigin = 'AUCTION' | 'MISSION' // only AUCTION is created this slice
+export type ClaimOrigin = 'AUCTION' | 'MISSION' // MISSION produced by the §9.10 lock reconcile (loop.ts)
 
 /** The claims sub-protocol carried in A2AMessage.payload on the `type:'claims'` channel. */
 export type ClaimMsg =
