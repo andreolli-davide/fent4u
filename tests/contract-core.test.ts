@@ -19,3 +19,42 @@ test('navTarget returns the tile for AT_TILE and the centre for IN_ZONE', () => 
   expect(navTarget({ kind: 'AT_TILE', tile: { x: 1, y: 2 } })).toEqual({ x: 1, y: 2 })
   expect(navTarget({ kind: 'IN_ZONE', center: { x: 4, y: 4 }, radius: 2 })).toEqual({ x: 4, y: 4 })
 })
+
+import { advance, type Contract } from '../src/coordination/contract.js'
+
+// A rendezvous: both reach within r=3 of (5,5); barrier needs both milestones.
+function rdv(posted: Record<string, boolean> = {}): Contract {
+  return {
+    id: 'c1', type: 'RENDEZVOUS',
+    steps: [
+      { kind: 'LOCAL', agent: 'liaison', goal: { kind: 'IN_ZONE', center: { x: 5, y: 5 }, radius: 3 }, post: 'liaison_ready' },
+      { kind: 'LOCAL', agent: 'courier', goal: { kind: 'IN_ZONE', center: { x: 5, y: 5 }, radius: 3 }, post: 'courier_ready' },
+      { kind: 'BARRIER', needs: ['liaison_ready', 'courier_ready'] },
+    ],
+    posted, payoff: 500, deadline: 9999, status: 'ACTIVE',
+  }
+}
+
+test('advance: navigate toward my zone when I am outside it', () => {
+  expect(advance(rdv(), 'liaison', { x: 0, y: 0 })).toEqual({ kind: 'navigate', to: { x: 5, y: 5 } })
+})
+
+test('advance: post my milestone when I am inside the zone', () => {
+  expect(advance(rdv(), 'liaison', { x: 5, y: 6 })).toEqual({ kind: 'post', milestone: 'liaison_ready' })
+})
+
+test('advance: block at the barrier when only I have posted', () => {
+  const c = rdv({ liaison_ready: true })
+  // I (liaison) am in-zone and already posted; the barrier still needs courier_ready.
+  expect(advance(c, 'liaison', { x: 5, y: 5 })).toEqual({ kind: 'block' })
+})
+
+test('advance: done once the barrier is released (both posted)', () => {
+  const c = rdv({ liaison_ready: true, courier_ready: true })
+  expect(advance(c, 'liaison', { x: 5, y: 5 })).toEqual({ kind: 'done' })
+})
+
+test('advance: I skip the OTHER agent\'s LOCAL step', () => {
+  // courier, far from zone, liaison not yet ready: courier works on ITS own local.
+  expect(advance(rdv(), 'courier', { x: 0, y: 0 })).toEqual({ kind: 'navigate', to: { x: 5, y: 5 } })
+})
