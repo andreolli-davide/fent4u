@@ -5,6 +5,8 @@
 import type { AgentId } from '../types/a2a.js'
 import type { Pos } from '../types/perception.js'
 import type { ParcelBelief } from '../blackboard/beliefs.js'
+import type { Grid } from '../planning/astar.js'
+import type { Mission } from '../mission/kinds.js'
 
 export interface AgentRef { id: AgentId; pos: Pos }
 
@@ -33,4 +35,25 @@ export function bindRoles(parcel: Pos, a: AgentRef, b: AgentRef): { picker: Agen
   const db = manhattan(b.pos, parcel)
   const aPicks = da < db || (da === db && a.id < b.id)
   return aPicks ? { picker: a.id, deliverer: b.id } : { picker: b.id, deliverer: a.id }
+}
+
+// §8.4 default in-zone radius when the LLM transcribed none (the worked example uses 3).
+export const RENDEZVOUS_RADIUS = 3
+// Fallback contract lifetime when the mission carries no deadline (absolute-tick deadline added in loop).
+export const DEFAULT_CONTRACT_TTL = 500
+
+// Coordinate-free meet-point resolution (§8.4): an explicit TEXT_BOUND tile wins; otherwise the
+// delivery zone nearest the map centre — a real landmark both agents know. null ⇒ DECLINE.
+export function rendezvousTarget(mission: Mission, grid: Grid): Pos | null {
+  const t = mission.params.targetTile
+  if (t !== undefined && t.tag === 'TEXT_BOUND') return { x: t.x, y: t.y }
+  if (grid.deliveryZones.length === 0) return null
+  const centre: Pos = { x: Math.floor(grid.w / 2), y: Math.floor(grid.h / 2) }
+  let best = grid.deliveryZones[0]
+  let bestD = manhattan(best, centre)
+  for (const z of grid.deliveryZones) {
+    const d = manhattan(z, centre)
+    if (d < bestD || (d === bestD && (z.x < best.x || (z.x === best.x && z.y < best.y)))) { best = z; bestD = d }
+  }
+  return { x: best.x, y: best.y }
 }

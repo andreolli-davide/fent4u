@@ -1,7 +1,9 @@
 // tests/bridge-core.test.ts
 import { test, expect } from 'bun:test'
-import { selectHandoffParcel, bindRoles } from '../src/coordination/bridge.js'
+import { selectHandoffParcel, bindRoles, rendezvousTarget } from '../src/coordination/bridge.js'
 import type { ParcelBelief } from '../src/blackboard/beliefs.js'
+import type { Mission } from '../src/mission/kinds.js'
+import type { Grid } from '../src/planning/astar.js'
 
 function p(id: string, x: number, y: number, rewardSeen: number, carriedBy: string | null = null): ParcelBelief {
   return { id, pos: { x, y }, rewardSeen, carriedBy, lastSeen: 0 }
@@ -35,4 +37,27 @@ test('bindRoles makes the agent closer to the parcel the picker', () => {
 test('bindRoles breaks distance ties by the lower agent id (courier < liaison)', () => {
   const r = bindRoles({ x: 5, y: 0 }, { id: 'liaison', pos: { x: 4, y: 0 } }, { id: 'courier', pos: { x: 6, y: 0 } })
   expect(r.picker).toBe('courier')
+})
+
+function gridWith(zones: Array<{ x: number; y: number }>, w = 10, h = 10): Grid {
+  return { w, h, tiles: new Map(), deliveryZones: zones }
+}
+function coordMission(params: Mission['params']): Mission {
+  return { id: 'm1', kind: 'COORDINATION_CONTRACT', payoff: 500, abstractIntent: 'meet', params, rawText: 'meet', status: 'CLASSIFIED' }
+}
+
+test('rendezvousTarget uses a TEXT_BOUND tile verbatim', () => {
+  const m = coordMission({ contractType: 'RENDEZVOUS', targetTile: { tag: 'TEXT_BOUND', x: 7, y: 3 } })
+  expect(rendezvousTarget(m, gridWith([{ x: 0, y: 0 }]))).toEqual({ x: 7, y: 3 })
+})
+
+test('rendezvousTarget falls back to the delivery zone nearest the map centre', () => {
+  // centre of a 10x10 grid is (5,5); (4,6) is nearer than (0,0).
+  const m = coordMission({ contractType: 'RENDEZVOUS' })
+  expect(rendezvousTarget(m, gridWith([{ x: 0, y: 0 }, { x: 4, y: 6 }]))).toEqual({ x: 4, y: 6 })
+})
+
+test('rendezvousTarget returns null with no TEXT_BOUND and no delivery zones', () => {
+  const m = coordMission({ contractType: 'RENDEZVOUS' })
+  expect(rendezvousTarget(m, gridWith([]))).toBeNull()
 })
