@@ -1,6 +1,8 @@
 // The typed Mission (DESIGN §4.2 subset this slice produces) + the OpenAI function schemas
 // + a hand-written boundary guard on `unknown`.
 
+import type { Pos } from '../types/perception.js'
+
 export type MissionKind =
   | 'QUERY'
   | 'CANDIDATE_INTENTION'
@@ -8,6 +10,7 @@ export type MissionKind =
   | 'HARD_CONSTRAINT'
   | 'COORDINATION_CONTRACT'
   | 'FALLBACK'
+  | 'AGENT_PLAN'
 
 export const MISSION_KINDS: readonly MissionKind[] = [
   'QUERY',
@@ -16,6 +19,7 @@ export const MISSION_KINDS: readonly MissionKind[] = [
   'HARD_CONSTRAINT',
   'COORDINATION_CONTRACT',
   'FALLBACK',
+  'AGENT_PLAN',
 ]
 
 // FALLBACK never becomes a Mission this slice — it is discarded before install, so no
@@ -43,6 +47,35 @@ export interface MissionParams {
     | { kind: 'ZONE'; tile: TileSlot }          // §7.2 — delivering at this tile voids the bundle
 }
 
+export type AgentStep =
+  | { op: 'goto'; target: Pos }
+  | { op: 'pickup'; parcelId: string }
+  | { op: 'deliver'; zone: Pos }
+  | { op: 'wait'; n: number }
+
+// A costed agent plan (§18.9): the ordered steps plus the shared-A* tick length and kernel value.
+export interface AgentPlan {
+  steps: AgentStep[]
+  L: number
+  vPlan: number
+}
+
+const isPos = (v: unknown): v is Pos =>
+  typeof v === 'object' && v !== null &&
+  typeof (v as Pos).x === 'number' && typeof (v as Pos).y === 'number'
+
+export function isAgentStep(u: unknown): u is AgentStep {
+  if (typeof u !== 'object' || u === null) return false
+  const s = u as Record<string, unknown>
+  switch (s.op) {
+    case 'goto': return isPos(s.target)
+    case 'pickup': return typeof s.parcelId === 'string'
+    case 'deliver': return isPos(s.zone)
+    case 'wait': return typeof s.n === 'number' && Number.isFinite(s.n)
+    default: return false
+  }
+}
+
 // What the LLM emits via emit_mission (no id/rawText/status).
 export interface MissionDraft {
   kind: MissionKind
@@ -54,6 +87,7 @@ export interface MissionDraft {
   deadline?: number
   params: MissionParams
   assignment?: { mode: 'ANY_ONE' | 'ALL' | 'PREDICATE'; count?: number; predicate?: string }
+  plan?: AgentPlan
 }
 
 export interface Mission extends MissionDraft {
