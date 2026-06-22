@@ -56,3 +56,31 @@ test('deadline urgency raises u as slack tightens', () => {
   const tight = uMission(coordMission({ deadline: 4 }), self, dist, 0, 1.0, { ...DEFAULT_PARAMS, c: 1000 })
   expect(tight!.u).toBeGreaterThan(far!.u)
 })
+
+import type { Mission } from '../src/mission/kinds.js'
+
+const planMission = (over: Partial<Mission> = {}): Mission => ({
+  kind: 'AGENT_PLAN', payoff: 40, abstractIntent: 'x', params: {},
+  id: 'm1', rawText: 'x', status: 'CLASSIFIED',
+  plan: { steps: [], L: 4, vPlan: 10 },
+  ...over,
+})
+const planDist = () => 0
+
+test('AGENT_PLAN scores value = payoff + vPlan with the LLM ceiling', () => {
+  const c = uMission(planMission(), { x: 0, y: 0 }, planDist, 0, 100, DEFAULT_PARAMS)
+  expect(c).not.toBeNull()
+  // raw = theta_llm * 1 * (40+10) * (1/(4+1)^alpha); alpha=1 ⇒ 0.45*50*0.2 = 4.5; ceiling 1.2*100 high.
+  expect(c!.u).toBeCloseTo(4.5, 5)
+})
+
+test('AGENT_PLAN past its deadline is dropped', () => {
+  const c = uMission(planMission({ deadline: 2 }), { x: 0, y: 0 }, planDist, 0, 100, DEFAULT_PARAMS)
+  // slack = 2 - 0 - 4 = -2 < 0 ⇒ null
+  expect(c).toBeNull()
+})
+
+test('AGENT_PLAN u is clamped by c_llm * rhoRef', () => {
+  const c = uMission(planMission({ payoff: 1000 }), { x: 0, y: 0 }, planDist, 0, 1, DEFAULT_PARAMS)
+  expect(c!.u).toBeCloseTo(1.2 * 1, 5) // c_llm * rhoRef
+})
