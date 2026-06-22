@@ -8,6 +8,7 @@ export interface Config {
   OPENAI_BASE_URL: string
   LOG_LEVEL: 'debug' | 'info' | 'warn' | 'error'
   LOG_DIR: string
+  MISSION_HANDLER: 'OFF' | 'LLM_AGENT' | 'PDDL'
 }
 
 export function parseConfig(env: Record<string, string | undefined>): Config {
@@ -32,6 +33,11 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
   const port = Number(env.DELIVEROO_PORT)
   if (Number.isNaN(port)) throw new Error('DELIVEROO_PORT must be a valid number')
 
+  const handler = env.MISSION_HANDLER ?? 'OFF'
+  if (!['OFF', 'LLM_AGENT', 'PDDL'].includes(handler)) {
+    throw new Error(`Invalid MISSION_HANDLER: ${handler}`)
+  }
+
   return {
     DELIVEROO_HOST: env.DELIVEROO_HOST!,
     DELIVEROO_PORT: port,
@@ -42,5 +48,6 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     OPENAI_BASE_URL: env.OPENAI_BASE_URL ?? '',
     LOG_LEVEL: level as Config['LOG_LEVEL'],
     LOG_DIR: env.LOG_DIR ?? './logs',
+    MISSION_HANDLER: handler as Config['MISSION_HANDLER'],
   }
 }

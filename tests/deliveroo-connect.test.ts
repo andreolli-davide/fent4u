@@ -42,6 +42,7 @@ const fakeConfig: Config = {
   OPENAI_BASE_URL: '',
   LOG_LEVEL: 'info',
   LOG_DIR: './logs',
+  MISSION_HANDLER: 'OFF',
 }
 
 const me: IOAgent = {
