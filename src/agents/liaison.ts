@@ -9,6 +9,12 @@ import { TeamMissionView } from '../mission/view.js'
 import { makeChat } from '../mission/llm.js'
 import { compile } from '../mission/compiler.js'
 import { createIntake } from '../mission/intake.js'
+import { reactPlan } from '../mission/agent/loop.js'
+import { makeMissionCompile, snapshotFromBeliefs } from '../mission/agent/wire.js'
+import { buildGrid } from '../planning/astar.js'
+import { decayConsts } from '../bdi/utility.js'
+import type { BeliefBase } from '../blackboard/beliefs.js'
+import type { Grid } from '../planning/astar.js'
 import type { WorkerEnvelope, A2AMessage } from '../types/a2a.js'
 import type { Config } from '../types/config.js'
 import type { Params } from '../bdi/params.js'
@@ -39,14 +45,32 @@ async function boot(config: Config, params: Params): Promise<void> {
   contracts = new ContractRuntime()
 
   const missionView = new TeamMissionView()
+  const broadcast = config.MISSION_HANDLER !== 'LLM_AGENT'
   const missionSlot = new MissionSlot((m) => {
     missionView.set(m)
-    send({ from: 'liaison', to: 'courier', type: 'mission', payload: m })
+    if (broadcast) send({ from: 'liaison', to: 'courier', type: 'mission', payload: m })
   })
   const chat = makeChat(config)
+
+  let grid: Grid | null = null
+  let beliefs: BeliefBase | null = null
+  let tnow = 0
+  const seq = { n: 0 }
+  const nextId = () => `m-${Date.now()}-${seq.n++}`
+
+  const missionCompile = makeMissionCompile({
+    handler: config.MISSION_HANDLER,
+    params,
+    compile: (raw) => compile(raw, chat),
+    reactPlan: (raw, snap) =>
+      reactPlan(raw, snap, chat, grid!, decayConsts(client.consts), tnow, params, nextId),
+    snapshot: () =>
+      grid !== null && beliefs !== null ? snapshotFromBeliefs(beliefs, grid.deliveryZones, tnow) : null,
+  })
+
   const intake = createIntake({
     slot: missionSlot,
-    compile: (raw) => compile(raw, chat),
+    compile: missionCompile,
     say: (toId, msg) => client.say(toId, msg),
     logger: log,   // log is non-null here — set at top of boot()
   })
@@ -71,8 +95,11 @@ async function boot(config: Config, params: Params): Promise<void> {
   })
   let booted = false
   client.onPerception((snap) => {
+    tnow = snap.tick
     if (!booted) {
-      blackboard = new Blackboard(loop.beliefBase(snap), { self: 'liaison', partner: 'courier', send, logger, partnerTtl: params.partner_lost_ticks })
+      beliefs = loop.beliefBase(snap)
+      grid = buildGrid(client.map)
+      blackboard = new Blackboard(beliefs, { self: 'liaison', partner: 'courier', send, logger, partnerTtl: params.partner_lost_ticks })
       blackboard.hello(snap.tick)
       booted = true
     }
