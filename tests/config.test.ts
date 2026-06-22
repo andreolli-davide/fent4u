@@ -52,4 +52,15 @@ describe('parseConfig', () => {
       'DELIVEROO_PORT must be a valid number'
     )
   })
+
+  it('MISSION_HANDLER defaults to OFF and rejects unknown values', () => {
+    const base2 = {
+      DELIVEROO_HOST: 'h', DELIVEROO_PORT: '8080',
+      TOKEN_LIAISON: 'a', TOKEN_COURIER: 'b',
+      OPENAI_MODEL: 'm', OPENAI_API_KEY: 'k',
+    }
+    expect(parseConfig({ ...base2 }).MISSION_HANDLER).toBe('OFF')
+    expect(parseConfig({ ...base2, MISSION_HANDLER: 'LLM_AGENT' }).MISSION_HANDLER).toBe('LLM_AGENT')
+    expect(() => parseConfig({ ...base2, MISSION_HANDLER: 'bogus' })).toThrow(/MISSION_HANDLER/)
+  })
 })
