@@ -1,6 +1,6 @@
 // §18.5 slice-1 tool registry (three families): perception(read) + world-actions(steps)
 // + free-form (calculate / answer / emit_plan). The LLM never computes geometry — reads hit
-// the snapshot; route_cost and grid validation live in cost.ts / the loop.
+// the snapshot; grid validation lives in cost.ts / the loop.
 
 import type { FunctionDef } from '../llm.js'
 import type { AgentStep } from '../kinds.js'
@@ -49,7 +49,7 @@ export function executeRead(snap: WorldSnapshot, name: string, args: Record<stri
       return p ? JSON.stringify({ id: p.id, pos: p.pos, reward: p.reward, carriedBy: p.carriedBy }) : 'error: no such parcel'
     }
     case 'list_delivery_zones':
-      return snap.zones.map((z) => `${z.x},${z.y}`).join('; ')
+      return JSON.stringify(snap.zones)
     case 'get_partner_status':
       return snap.partnerPos ? `${snap.partnerPos.x},${snap.partnerPos.y}` : 'unknown'
     case 'calculate': {

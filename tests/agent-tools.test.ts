@@ -27,7 +27,7 @@ test('tool classification', () => {
 test('executeRead returns observations from the snapshot', () => {
   expect(executeRead(snap, 'get_my_position', {})).toContain('1,1')
   expect(executeRead(snap, 'get_parcel', { id: 'p1' })).toContain('40')
-  expect(executeRead(snap, 'list_delivery_zones', {})).toContain('5,5')
+  expect(executeRead(snap, 'list_delivery_zones', {})).toContain('"x":5')
   expect(executeRead(snap, 'calculate', { expr: '6*7' })).toBe('42')
   expect(executeRead(snap, 'calculate', { expr: 'junk' })).toContain('error')
 })

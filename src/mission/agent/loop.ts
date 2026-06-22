@@ -36,8 +36,7 @@ export async function reactPlan(
 ): Promise<CompileResult> {
   const msgs: ChatMsg[] = [
     { role: 'system', content: SYSTEM },
-    { role: 'user', content: text },
-    { role: 'user', content: `snapshot: self=${JSON.stringify(snap.selfPos)} parcels=${JSON.stringify(snap.parcels.map((p) => ({ id: p.id, pos: p.pos, reward: p.reward })))} zones=${JSON.stringify(snap.zones)}` },
+    { role: 'user', content: `${text}\n\nsnapshot: self=${JSON.stringify(snap.selfPos)} parcels=${JSON.stringify(snap.parcels.map((p) => ({ id: p.id, pos: p.pos, reward: p.reward })))} zones=${JSON.stringify(snap.zones)}` },
   ]
   let sim = snap
   const steps: AgentStep[] = []
