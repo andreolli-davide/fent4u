@@ -7,9 +7,9 @@ function scripted(turns: ChatTurn[]): ChatFn {
   let i = 0
   return async () => turns[i++] ?? { content: '' }
 }
-const emit = (args: object): ChatTurn => ({ call: { name: 'emit_mission', arguments: JSON.stringify(args) } })
-const answer = (text: string): ChatTurn => ({ call: { name: 'answer_query', arguments: JSON.stringify({ text }) } })
-const calcCall = (expr: string): ChatTurn => ({ call: { name: 'calculate', arguments: JSON.stringify({ expr }) } })
+const emit = (args: object): ChatTurn => ({ calls: [{ name: 'emit_mission', arguments: JSON.stringify(args) }] })
+const answer = (text: string): ChatTurn => ({ calls: [{ name: 'answer_query', arguments: JSON.stringify({ text }) }] })
+const calcCall = (expr: string): ChatTurn => ({ calls: [{ name: 'calculate', arguments: JSON.stringify({ expr }) }] })
 
 test('compiles a CANDIDATE_INTENTION and transcribes the payoff sign', async () => {
   const pos = await compile('Move to (4,7) and get +10', scripted([
