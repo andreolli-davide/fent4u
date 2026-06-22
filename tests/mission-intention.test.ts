@@ -4,6 +4,7 @@ import { uMission } from '../src/bdi/mission-intention.js'
 import { DEFAULT_PARAMS } from '../src/bdi/params.js'
 import { assembleMission, type MissionDraft } from '../src/mission/kinds.js'
 import type { Pos } from '../src/types/perception.js'
+import type { Mission } from '../src/mission/kinds.js'
 
 const self: Pos = { x: 0, y: 0 }
 // dist = manhattan; unreachable tiles flagged by a sentinel coordinate (x<0).
@@ -56,8 +57,6 @@ test('deadline urgency raises u as slack tightens', () => {
   const tight = uMission(coordMission({ deadline: 4 }), self, dist, 0, 1.0, { ...DEFAULT_PARAMS, c: 1000 })
   expect(tight!.u).toBeGreaterThan(far!.u)
 })
-
-import type { Mission } from '../src/mission/kinds.js'
 
 const planMission = (over: Partial<Mission> = {}): Mission => ({
   kind: 'AGENT_PLAN', payoff: 40, abstractIntent: 'x', params: {},
