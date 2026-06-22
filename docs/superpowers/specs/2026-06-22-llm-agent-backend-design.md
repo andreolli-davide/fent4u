@@ -13,9 +13,11 @@ shared push-aware A\* into `L`, valued by the kernel into `V_plan`, and reintegr
 into the existing `U_mission` selector candidate (`θ_llm` / `c_llm`). Zero LLM work
 on the 50 ms BDI tick path.
 
-**Done when:** a mission routed to `LLM_AGENT` executes end-to-end — answer posted for
-a QUERY, or a step-list plan scored in the per-tick argmax and executed by the BDI
-runtime — with the typed-utility path (`OFF`) untouched.
+**Done when:** a mission routed to `LLM_AGENT` is handled end-to-end at the
+compile-and-score layer — answer posted for a QUERY (fully end-to-end), or a step-list
+plan compiled, costed (`L`, `V_plan`) and scored as a `U_mission` candidate in the
+per-tick argmax — with the typed-utility path (`OFF`) untouched. Tick-by-tick
+execution of the step-list is a later slice (see Out of slice 1).
 
 ## Scope
 
@@ -32,6 +34,14 @@ runtime — with the typed-utility path (`OFF`) untouched.
 - Minimal born-stale guard: one freshness re-check at landing.
 
 ### Out of slice 1 (later slices)
+- **Tick-by-tick execution of the step-list.** Slice 1 proves the compile → cost →
+  score integration (the plan enters the argmax as a candidate); a dedicated executor
+  that drives the step-list move-by-move (goto → route, pickup/deliver → act when
+  adjacent, advance to next step) is a later slice. The QUERY/`answer` path is fully
+  end-to-end in slice 1.
+- Multi-agent assignment of an AGENT_PLAN (bid/lock §9.10): slice 1 keeps the plan
+  liaison-local — it is not broadcast to the courier — so there is no contest. Proper
+  bid-based single-assignee binding is the coordination slice.
 - Strategy hooks family (§6/§7): `set_reward_shaper`, `add_constraint`,
   `set_zone_value`, `clear_policy`.
 - Coordination family (§8): `message_partner`, `claim_parcel`, `propose_contract`.
@@ -148,9 +158,10 @@ onMissionMsg(text) [switch = LLM_AGENT]
   -> born-stale check: belief-signature changed vs t0?
         yes -> one re-plan from fresh snapshot; still stale -> discard
         no  -> proceed
-  -> Mission { payoff, deadline, L, V_plan } -> mission slot
-  -> uMission candidate (θ_llm, c_llm) in the per-tick argmax
-  -> BDI runtime executes the step-list tick-by-tick
+  -> Mission { kind: AGENT_PLAN, payoff, deadline, plan: { steps, L, V_plan } }
+  -> installed liaison-local (not broadcast in slice 1)
+  -> uMission candidate (value = payoff + V_plan, θ_llm, c_llm) in the per-tick argmax
+  (tick-by-tick execution of the step-list = later slice)
 ```
 
 ## Error handling
