@@ -72,8 +72,12 @@ export async function compile(rawText: string, chat: ChatFn): Promise<CompileRes
 
   for (let iter = 0; iter < MAX_ITERS; iter++) {
     const turn = await chat(msgs, fns)
-    if (!('call' in turn)) return { kind: 'discard', reason: 'malformed' }
-    const { name, arguments: rawArgs } = turn.call
+    // The compiler is inherently sequential: it expects one terminal action per turn.
+    // If the model issues parallel tool calls we honour the first and loop — any other
+    // calls re-surface on the next turn after the tool result lands.
+    if (!('calls' in turn) || turn.calls.length === 0) return { kind: 'discard', reason: 'malformed' }
+    const call = turn.calls[0]!
+    const { name, arguments: rawArgs } = call
 
     let args: unknown
     try { args = JSON.parse(rawArgs) } catch { return { kind: 'discard', reason: 'malformed' } }
@@ -81,7 +85,7 @@ export async function compile(rawText: string, chat: ChatFn): Promise<CompileRes
     if (name === CALCULATE_FN.name) {
       const expr = (args as { expr?: unknown }).expr
       const v = typeof expr === 'string' ? calc(expr) : null
-      const callId = turn.call.id ?? `call_${iter}`
+      const callId = call.id ?? `call_${iter}`
       msgs.push({
         role: 'assistant',
         content: null,
