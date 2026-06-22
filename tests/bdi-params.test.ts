@@ -57,3 +57,11 @@ test('mission defaults are present and sane', () => {
 test('out-of-range mission param throws', () => {
   expect(() => loadParams(tmpFile('p_feasible_min: 2.0\n'))).toThrow(/p_feasible_min/)
 })
+
+test('LLM-branch params have the spec defaults', () => {
+  expect(DEFAULT_PARAMS.theta_llm).toBe(0.45)
+  expect(DEFAULT_PARAMS.c_llm).toBe(1.2)
+  expect(DEFAULT_PARAMS.max_iters).toBe(12)
+  expect(DEFAULT_PARAMS.max_iters_query).toBe(3)
+  expect(DEFAULT_PARAMS.batch_max).toBe(6)
+})
