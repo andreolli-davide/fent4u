@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { isMission, isMissionDraft, assembleMission, type MissionDraft } from '../src/mission/kinds.js'
+import { isMission, isMissionDraft, assembleMission, isAgentStep, MISSION_KINDS, type MissionDraft } from '../src/mission/kinds.js'
 
 const goodDraft: MissionDraft = {
   kind: 'CANDIDATE_INTENTION',
@@ -42,5 +42,16 @@ test('isMissionDraft accepts a HARD_CONSTRAINT draft carrying priced + absolute 
     params: { priced: [{ tile: { tag: 'TEXT_BOUND', x: 5, y: 2 }, toll: 50 }], absolute: { kind: 'REWARD_THRESHOLD', max: 10 } },
   }
   expect(isMissionDraft(draft)).toBe(true)
+})
+
+test('AGENT_PLAN is a known kind and AgentStep guard discriminates ops', () => {
+  expect(MISSION_KINDS).toContain('AGENT_PLAN')
+  expect(isAgentStep({ op: 'goto', target: { x: 1, y: 2 } })).toBe(true)
+  expect(isAgentStep({ op: 'pickup', parcelId: 'p1' })).toBe(true)
+  expect(isAgentStep({ op: 'deliver', zone: { x: 0, y: 0 } })).toBe(true)
+  expect(isAgentStep({ op: 'wait', n: 3 })).toBe(true)
+  expect(isAgentStep({ op: 'fly' })).toBe(false)
+  expect(isAgentStep({ op: 'goto' })).toBe(false)
+  expect(isAgentStep(null)).toBe(false)
 })
 

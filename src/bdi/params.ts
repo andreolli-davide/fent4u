@@ -23,6 +23,11 @@ export interface Params {
   rate_bootstrap: number     // delivery rate used before any sample exists
   expiry_floor_ticks: number // §6.2: force-deliver a carried parcel decaying to 0 within this many ticks
   explore_stale_cap: number  // §5.5 cap on staleness in U_explore (ticks): keeps the info bonus a bounded DIRECTION signal, below real route opportunities, instead of growing unbounded and dominating collection
+  theta_llm: number          // §18.9 humility weight for the LLM-agent branch (< theta_mission)
+  c_llm: number              // §18.9 tighter rate ceiling for the LLM-agent branch
+  max_iters: number          // §18.9 max ReAct turns per plan mission
+  max_iters_query: number    // §18.9 max ReAct turns for an atomic QUERY
+  batch_max: number          // §18.4 independent tool calls per turn
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -46,6 +51,11 @@ export const DEFAULT_PARAMS: Params = {
   rate_bootstrap: 0.5,
   expiry_floor_ticks: 3,
   explore_stale_cap: 20,
+  theta_llm: 0.45,
+  c_llm: 1.2,
+  max_iters: 12,
+  max_iters_query: 3,
+  batch_max: 6,
 }
 
 type Range = [min: number, max: number]
@@ -70,6 +80,11 @@ const RANGES: Record<keyof Params, Range> = {
   rate_bootstrap: [0, 100],
   expiry_floor_ticks: [0, 100],
   explore_stale_cap: [1, 100000],
+  theta_llm: [0, 4],
+  c_llm: [0, 10],
+  max_iters: [1, 100],
+  max_iters_query: [1, 100],
+  batch_max: [1, 50],
 }
 
 export function loadParams(path = 'config/params.yaml'): Params {

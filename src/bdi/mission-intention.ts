@@ -20,6 +20,23 @@ export function uMission(
   rhoRef: number,
   params: Params,
 ): Candidate | null {
+  if (mission.kind === 'AGENT_PLAN') {
+    const plan = mission.plan
+    if (plan === undefined || !Number.isFinite(plan.L)) return null
+    const Lm = plan.L
+    const sm = mission.deadline === undefined ? Infinity : mission.deadline - tnow - Lm
+    if (sm < 0) return null                                  // deadline unreachable (§4.3)
+    const theta = mission.theta ?? params.theta_llm
+    const value = mission.payoff + plan.vPlan                // §18.9 payoff + kernel V_plan
+    const completion = 1 / Math.pow(Lm + 1, params.alpha)
+    const shadow = sm === Infinity ? 0 : 1 / Math.pow(sm + 1, params.alpha)
+    const urgency = Math.max(completion, shadow)
+    const raw = theta * 1 * value * urgency                  // P_feasible binary {1,0}; here 1 (§18.9)
+    const u = Math.min(raw, params.c_llm * rhoRef)           // tighter LLM rate ceiling
+    if (u <= 0) return null
+    return { intention: { kind: 'mission', mission }, u }
+  }
+
   const t = mission.params.targetTile
   if (mission.kind !== 'CANDIDATE_INTENTION' || t === undefined || t.tag !== 'TEXT_BOUND') return null
 
