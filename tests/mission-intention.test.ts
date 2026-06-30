@@ -83,3 +83,11 @@ test('AGENT_PLAN u is clamped by c_llm * rhoRef', () => {
   const c = uMission(planMission({ payoff: 1000 }), { x: 0, y: 0 }, planDist, 0, 1, DEFAULT_PARAMS)
   expect(c!.u).toBeCloseTo(1.2 * 1, 5) // c_llm * rhoRef
 })
+
+test('a suppressed AGENT_PLAN is withheld from the argmax', () => {
+  // suppressedUntil in the future ⇒ null; in the past ⇒ candidate present again.
+  const future = uMission(planMission({ suppressedUntil: 10 }), { x: 0, y: 0 }, planDist, 5, 100, DEFAULT_PARAMS)
+  expect(future).toBeNull()
+  const past = uMission(planMission({ suppressedUntil: 3 }), { x: 0, y: 0 }, planDist, 5, 100, DEFAULT_PARAMS)
+  expect(past).not.toBeNull()
+})
