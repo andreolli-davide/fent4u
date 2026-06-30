@@ -70,4 +70,5 @@ test('executor params carry their slice-2 defaults', () => {
   expect(DEFAULT_PARAMS.kblock_max).toBe(5)
   expect(DEFAULT_PARAMS.antiphantom_n).toBe(8)
   expect(DEFAULT_PARAMS.suppress_ticks).toBe(20)
+  expect(DEFAULT_PARAMS.replan_debounce_ticks).toBe(4) // I1: born-stale debounce (review finding I1)
 })
