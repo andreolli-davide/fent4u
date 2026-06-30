@@ -17,6 +17,9 @@ import type { A2AMessage, AgentId } from '../types/a2a.js'
 import { uMission } from './mission-intention.js'
 import { DeliveryRateTracker } from './rate-tracker.js'
 import type { TeamMissionView } from '../mission/view.js'
+import type { Mission } from '../mission/kinds.js'
+import { snapshotFromBeliefs } from '../mission/agent/wire.js'
+import { freshCursor, goalOf, manhattan, progressed, revalidateStep, worldSignature, blockingTile, type PlanCursor } from '../mission/agent/executor.js'
 
 type LogFn = {
   info: (obj: Record<string, unknown>, msg?: string) => void
@@ -32,6 +35,7 @@ export class BdiLoop {
   private readonly seenAt = new Map<string, number>()
   private beliefs: BeliefBase | null = null
   private committed: Intention | null = null
+  private planCursor: PlanCursor | null = null
   private committedU = 0
   private acting = false
   private lastRebalanceTick = -Infinity
@@ -45,7 +49,7 @@ export class BdiLoop {
     private readonly log: LogFn,
     private readonly claims: ClaimStore = new ClaimStore(),
     private readonly coord?: { partner: AgentId; send: (msg: A2AMessage) => void },
-    private readonly mission?: { view: TeamMissionView; pursue: boolean; onSatisfied?: () => void; contracts?: ContractRuntime },
+    private readonly mission?: { view: TeamMissionView; pursue: boolean; onSatisfied?: () => void; contracts?: ContractRuntime; requestReplan?: (rawText: string, maskTiles?: Pos[]) => void },
   ) {
     this.grid = buildGrid(client.map)
     this.dc = decayConsts(client.consts)
@@ -403,6 +407,86 @@ export class BdiLoop {
     this.log.debug({ tick: tnow, pos: self, contract: c.id, action: 'block' }, 'contract')
   }
 
+  // §17.7 step-list executor: drive the committed AGENT_PLAN one step per tick. Invalidation,
+  // K_block, born-stale → request an off-loop re-plan (the slot is single-flight); anti-phantom
+  // → suppress the branch. Liaison-local this slice (not broadcast).
+  private async actAgentPlan(mission: Mission, beliefs: BeliefBase, ctx: PlanCtx, tnow: number): Promise<void> {
+    const plan = mission.plan
+    if (plan === undefined) return
+    const snap = snapshotFromBeliefs(beliefs, this.grid.deliveryZones, tnow)
+    const sigNow = worldSignature(snap, plan)
+
+    if (this.planCursor === null || this.planCursor.missionId !== mission.id) {
+      this.planCursor = freshCursor(mission, sigNow, snap)
+    }
+    const cur = this.planCursor
+    const step = plan.steps[cur.ptr]
+    if (step === undefined) { this.mission?.onSatisfied?.(); this.planCursor = null; return }
+
+    // §17.7.2-B/D: born-stale (world outside the plan moved) or current step invalid → re-plan.
+    if (sigNow !== cur.sigAtLanding || revalidateStep(step, snap, this.grid, ctx) === 'invalid') {
+      this.planCursor = null
+      this.mission?.requestReplan?.(mission.rawText)
+      this.log.info({ tick: tnow, missionId: mission.id }, 'agent-plan re-plan (stale/invalid)')
+      return
+    }
+
+    const self = snap.selfPos
+    let ptrAdvanced = false
+    let isWaitTick = false
+
+    if (step.op === 'goto') {
+      if (self.x === step.target.x && self.y === step.target.y) { cur.ptr++; ptrAdvanced = true }
+      else await this.stepToward(beliefs, ctx, self, step.target)
+    } else if (step.op === 'pickup') {
+      const p = snap.parcels.find((q) => q.id === step.parcelId)
+      const at = p && self.x === p.pos.x && self.y === p.pos.y
+      if (at) { await this.doPickup(beliefs, tnow); cur.ptr++; ptrAdvanced = true }
+      else if (p) await this.stepToward(beliefs, ctx, self, p.pos)
+    } else if (step.op === 'deliver') {
+      if (self.x === step.zone.x && self.y === step.zone.y) { await this.doDeliver(beliefs, step.zone, tnow); cur.ptr++; ptrAdvanced = true }
+      else await this.stepToward(beliefs, ctx, self, step.zone)
+    } else { // wait
+      if (cur.waitLeft === null) cur.waitLeft = step.n
+      cur.waitLeft--
+      isWaitTick = true
+      if (cur.waitLeft <= 0) { cur.ptr++; cur.waitLeft = null; ptrAdvanced = true }
+    }
+
+    // Progress bookkeeping (§17.7.4). Distance is to the (possibly new) current step's goal.
+    const nextStep = plan.steps[cur.ptr]
+    const goal = nextStep ? goalOf(nextStep, snap) : null
+    const curDist = goal ? manhattan(self, goal) : 0
+    const moved = self.x !== cur.lastSelfPos.x || self.y !== cur.lastSelfPos.y
+    if (progressed(ptrAdvanced, cur.lastDist, curDist, isWaitTick)) { cur.ticksNoProgress = 0 }
+    else cur.ticksNoProgress++
+    // transit stall: a move-bearing step that did not change position
+    const transit = (step.op === 'goto' || step.op === 'pickup' || step.op === 'deliver') && !ptrAdvanced
+    if (transit && !moved) cur.blockedCount++
+    else cur.blockedCount = 0
+    cur.lastDist = curDist
+    cur.lastSelfPos = self
+
+    // K_block: mask the blocking tile and re-plan (§17.7.4).
+    if (cur.blockedCount >= this.params.kblock_max) {
+      const g = goalOf(step, snap)
+      const mask = g ? blockingTile(self, g, this.grid, ctx) : null
+      this.planCursor = null
+      this.mission?.requestReplan?.(mission.rawText, mask ? [mask] : undefined)
+      this.log.info({ tick: tnow, missionId: mission.id, mask }, 'agent-plan re-plan (K_block)')
+      return
+    }
+    // anti-phantom: suppress the branch for suppress_ticks (§17.7.4).
+    if (cur.ticksNoProgress >= this.params.antiphantom_n) {
+      mission.suppressedUntil = tnow + this.params.suppress_ticks
+      this.planCursor = null
+      this.log.info({ tick: tnow, missionId: mission.id, until: mission.suppressedUntil }, 'agent-plan suppressed (anti-phantom)')
+      return
+    }
+    // plan complete
+    if (cur.ptr >= plan.steps.length) { this.mission?.onSatisfied?.(); this.planCursor = null }
+  }
+
   private sendContract(msg: ContractMsg): void {
     if (!this.coord) return
     this.coord.send({ from: this.client.role, to: this.coord.partner, type: 'contract', payload: msg })
@@ -466,8 +550,12 @@ export class BdiLoop {
     if (chosen.kind === 'explore') {
       goal = chosen.target.tile
     } else if (chosen.kind === 'mission') {
+      if (chosen.mission.kind === 'AGENT_PLAN') {
+        await this.actAgentPlan(chosen.mission, beliefs, ctx, tnow)
+        return
+      }
       const t = chosen.mission.params.targetTile
-      // uMission only emits a candidate for a TEXT_BOUND target, so this is safe.
+      // uMission only emits a CANDIDATE_INTENTION candidate for a TEXT_BOUND target, so this is safe.
       if (t === undefined || t.tag !== 'TEXT_BOUND') return
       const target: Pos = { x: t.x, y: t.y }
       if (self.x === target.x && self.y === target.y) {
