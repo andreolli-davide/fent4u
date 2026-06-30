@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { makeMissionCompile, snapshotFromBeliefs } from '../src/mission/agent/wire.js'
+import { makeMissionCompile, snapshotFromBeliefs, makeReplanRequester } from '../src/mission/agent/wire.js'
 import { DEFAULT_PARAMS } from '../src/bdi/params.js'
 import { BeliefBase } from '../src/blackboard/beliefs.js'
 import type { WorldSnapshot } from '../src/mission/agent/snapshot.js'
@@ -65,6 +65,22 @@ test('snapshotFromBeliefs stores maskTiles (empty/absent ⇒ undefined)', () => 
   expect(withMask.maskTiles).toEqual([{ x: 1, y: 1 }])
   const without = snapshotFromBeliefs(bb, zones, 0)
   expect(without.maskTiles).toBeUndefined()
+})
+
+test('makeReplanRequester sets the pending mask then submits rawText once', () => {
+  const submitted: string[] = []
+  let mask: Pos[] | undefined
+  const requestReplan = makeReplanRequester(
+    (raw: string) => submitted.push(raw),
+    (m?: Pos[]) => { mask = m },
+  )
+  requestReplan('fetch the parcel', [{ x: 2, y: 2 }])
+  expect(mask).toEqual([{ x: 2, y: 2 }])
+  expect(submitted).toEqual(['fetch the parcel'])
+  // no mask → mask cleared
+  requestReplan('again')
+  expect(mask).toBeUndefined()
+  expect(submitted).toEqual(['fetch the parcel', 'again'])
 })
 
 test('LLM_AGENT born-stale: no re-plan when fresh sig is unchanged', async () => {

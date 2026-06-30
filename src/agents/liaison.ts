@@ -10,7 +10,7 @@ import { makeChat } from '../mission/llm.js'
 import { compile } from '../mission/compiler.js'
 import { createIntake } from '../mission/intake.js'
 import { reactPlan } from '../mission/agent/loop.js'
-import { makeMissionCompile, snapshotFromBeliefs } from '../mission/agent/wire.js'
+import { makeMissionCompile, snapshotFromBeliefs, makeReplanRequester } from '../mission/agent/wire.js'
 import { buildGrid } from '../planning/astar.js'
 import { decayConsts } from '../bdi/utility.js'
 import type { BeliefBase } from '../blackboard/beliefs.js'
@@ -18,6 +18,7 @@ import type { Grid } from '../planning/astar.js'
 import type { WorkerEnvelope, A2AMessage } from '../types/a2a.js'
 import type { Config } from '../types/config.js'
 import type { Params } from '../bdi/params.js'
+import type { Pos } from '../types/perception.js'
 
 let log: ReturnType<typeof makeLogger> | null = null
 let blackboard: Blackboard | null = null
@@ -55,6 +56,7 @@ async function boot(config: Config, params: Params): Promise<void> {
   let grid: Grid | null = null
   let beliefs: BeliefBase | null = null
   let tnow = 0
+  let pendingMask: Pos[] | undefined
   const seq = { n: 0 }
   const nextId = () => `m-${Date.now()}-${seq.n++}`
 
@@ -64,8 +66,12 @@ async function boot(config: Config, params: Params): Promise<void> {
     compile: (raw) => compile(raw, chat),
     reactPlan: (raw, snap) =>
       reactPlan(raw, snap, chat, grid!, decayConsts(client.consts), tnow, params, nextId),
-    snapshot: () =>
-      grid !== null && beliefs !== null ? snapshotFromBeliefs(beliefs, grid.deliveryZones, tnow) : null,
+    snapshot: () => {
+      if (grid === null || beliefs === null) return null
+      const snap = snapshotFromBeliefs(beliefs, grid.deliveryZones, tnow, pendingMask)
+      pendingMask = undefined // one-shot: the mask applies only to the re-plan it was set for
+      return snap
+    },
   })
 
   const intake = createIntake({
@@ -80,6 +86,11 @@ async function boot(config: Config, params: Params): Promise<void> {
   })
   log.info({}, 'mission lane online')
 
+  const requestReplan = makeReplanRequester(
+    (raw) => intake.onMessage('self', raw),
+    (m) => { pendingMask = m },
+  )
+
   const loop = new BdiLoop(client, params, {
     info: (obj, msg) => log!.info(obj as object, msg),
     debug: (obj, msg) => log!.debug(obj as object, msg),
@@ -92,6 +103,7 @@ async function boot(config: Config, params: Params): Promise<void> {
     pursue: true,
     onSatisfied: () => missionSlot.supersede(),
     contracts,
+    requestReplan,
   })
   let booted = false
   client.onPerception((snap) => {
