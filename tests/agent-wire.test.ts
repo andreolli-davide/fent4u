@@ -1,7 +1,14 @@
 import { test, expect } from 'bun:test'
-import { makeMissionCompile } from '../src/mission/agent/wire.js'
+import { makeMissionCompile, snapshotFromBeliefs } from '../src/mission/agent/wire.js'
 import { DEFAULT_PARAMS } from '../src/bdi/params.js'
+import { BeliefBase } from '../src/blackboard/beliefs.js'
 import type { WorldSnapshot } from '../src/mission/agent/snapshot.js'
+import type { GameConsts, Pos } from '../src/types/perception.js'
+
+// ── Minimal belief-base fixture for snapshotFromBeliefs tests ───────────────
+const BB_CONSTS: GameConsts = { CLOCK: 50, MOVEMENT_DURATION: 50, OBS_DISTANCE: 5, PARCEL_DECAY_TICKS: Infinity, PARCEL_DECAY_RAW: 'infinite', PENALTY: 0 }
+const bb = new BeliefBase({ id: 'me', name: 'me', teamId: 'A', pos: { x: 0, y: 0 }, score: 0 }, BB_CONSTS, [])
+const zones: Pos[] = [{ x: 5, y: 0 }]
 
 const stubDeps = (handler: 'OFF' | 'LLM_AGENT' | 'PDDL') => ({
   handler,
@@ -50,6 +57,14 @@ test('LLM_AGENT born-stale: re-plans once when fresh sig differs', async () => {
 
   expect(reactCalls).toBe(2)
   expect((result as typeof missions[0]).mission.id).toBe('plan-2')
+})
+
+test('snapshotFromBeliefs stores maskTiles (empty/absent ⇒ undefined)', () => {
+  // Reuse the bb + zones fixture above.
+  const withMask = snapshotFromBeliefs(bb, zones, 0, [{ x: 1, y: 1 }])
+  expect(withMask.maskTiles).toEqual([{ x: 1, y: 1 }])
+  const without = snapshotFromBeliefs(bb, zones, 0)
+  expect(without.maskTiles).toBeUndefined()
 })
 
 test('LLM_AGENT born-stale: no re-plan when fresh sig is unchanged', async () => {

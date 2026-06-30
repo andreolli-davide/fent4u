@@ -38,7 +38,7 @@ export function makeMissionCompile(deps: CompileDeps): (raw: string) => Promise<
 // Build a WorldSnapshot from the live belief base (§18.4). selfPos/parcels/partner are read here;
 // zones come from the prebuilt grid. tnow must be passed explicitly because BeliefBase.lastTick
 // is private — callers should pass snap.tick or the last observed tick.
-export function snapshotFromBeliefs(bb: BeliefBase, zones: Pos[], tnow: number): WorldSnapshot {
+export function snapshotFromBeliefs(bb: BeliefBase, zones: Pos[], tnow: number, maskTiles?: Pos[]): WorldSnapshot {
   const parcels = [...bb.parcels.values()].map((p) => ({
     id: p.id, pos: p.pos, reward: p.rewardSeen, carriedBy: p.carriedBy,
   }))
@@ -49,5 +49,6 @@ export function snapshotFromBeliefs(bb: BeliefBase, zones: Pos[], tnow: number):
   return {
     t0: tnow, selfPos, carried: [], delivered: [],
     parcels, zones, partnerPos, sig: beliefSignature(parcels, selfPos),
+    maskTiles,
   }
 }
