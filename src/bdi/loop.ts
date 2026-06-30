@@ -36,6 +36,9 @@ export class BdiLoop {
   private beliefs: BeliefBase | null = null
   private committed: Intention | null = null
   private planCursor: PlanCursor | null = null
+  // I1: global rate-limit on born-stale (opportunity) re-plans. Absolute server-frame tick;
+  // ONLY ever read in the difference `tnow - this.lastReplanTick` (never used absolutely).
+  private lastReplanTick = Number.NEGATIVE_INFINITY
   private committedU = 0
   private acting = false
   private lastRebalanceTick = -Infinity
@@ -423,12 +426,27 @@ export class BdiLoop {
     const step = plan.steps[cur.ptr]
     if (step === undefined) { this.mission?.onSatisfied?.(); this.planCursor = null; return }
 
-    // §17.7.2-B/D: born-stale (world outside the plan moved) or current step invalid → re-plan.
-    if (sigNow !== cur.sigAtLanding || revalidateStep(step, snap, this.grid, ctx) === 'invalid') {
+    // §17.7.2-D: an invalid current step is a correctness re-plan — fire immediately (not debounced).
+    if (revalidateStep(step, snap, this.grid, ctx) === 'invalid') {
       this.planCursor = null
+      this.lastReplanTick = tnow
       this.mission?.requestReplan?.(mission.rawText)
-      this.log.info({ tick: tnow, missionId: mission.id }, 'agent-plan re-plan (stale/invalid)')
+      this.log.info({ tick: tnow, missionId: mission.id }, 'agent-plan re-plan (invalid step)')
       return
+    }
+    // §17.7.2-B born-stale: an OPPORTUNITY trigger (world outside the plan moved). Rate-limit it
+    // (I1) — under parcel churn this fires every few ticks and would thrash the single-flight intake.
+    if (sigNow !== cur.sigAtLanding) {
+      if (tnow - this.lastReplanTick >= this.params.replan_debounce_ticks) {
+        this.planCursor = null
+        this.lastReplanTick = tnow
+        this.mission?.requestReplan?.(mission.rawText)
+        this.log.info({ tick: tnow, missionId: mission.id }, 'agent-plan re-plan (born-stale)')
+        return
+      }
+      // within the debounce window: absorb the world change and keep executing the still-valid plan.
+      cur.sigAtLanding = sigNow
+      this.log.debug({ tick: tnow, missionId: mission.id }, 'agent-plan born-stale absorbed (debounce)')
     }
 
     const self = snap.selfPos
@@ -472,6 +490,7 @@ export class BdiLoop {
       const g = goalOf(step, snap)
       const mask = g ? blockingTile(self, g, this.grid, ctx) : null
       this.planCursor = null
+      this.lastReplanTick = tnow
       this.mission?.requestReplan?.(mission.rawText, mask ? [mask] : undefined)
       this.log.info({ tick: tnow, missionId: mission.id, mask }, 'agent-plan re-plan (K_block)')
       return

@@ -31,6 +31,7 @@ export interface Params {
   kblock_max: number         // §17.7.4 consecutive blocked ticks before a masked re-plan
   antiphantom_n: number      // §17.7.4 no-progress ticks before suppressing the branch
   suppress_ticks: number     // §17.7.4 branch suppression duration (ticks)
+  replan_debounce_ticks: number // I1: min ticks between born-stale (opportunity) re-plans; 0 disables
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -62,6 +63,7 @@ export const DEFAULT_PARAMS: Params = {
   kblock_max: 5,
   antiphantom_n: 8,
   suppress_ticks: 20,
+  replan_debounce_ticks: 4,
 }
 
 type Range = [min: number, max: number]
@@ -94,6 +96,7 @@ const RANGES: Record<keyof Params, Range> = {
   kblock_max: [1, 1000],
   antiphantom_n: [1, 1000],
   suppress_ticks: [1, 100000],
+  replan_debounce_ticks: [0, 1000],
 }
 
 export function loadParams(path = 'config/params.yaml'): Params {
