@@ -70,15 +70,18 @@ test('snapshotFromBeliefs stores maskTiles (empty/absent ⇒ undefined)', () => 
 test('makeReplanRequester sets the pending mask then submits rawText once', () => {
   const submitted: string[] = []
   let mask: Pos[] | undefined
+  let maskAtSubmitTime: Pos[] | undefined
   const requestReplan = makeReplanRequester(
-    (raw: string) => submitted.push(raw),
+    (raw: string) => { maskAtSubmitTime = mask; submitted.push(raw) },
     (m?: Pos[]) => { mask = m },
   )
   requestReplan('fetch the parcel', [{ x: 2, y: 2 }])
+  expect(maskAtSubmitTime).toEqual([{ x: 2, y: 2 }]) // mask must be staged BEFORE submit fires — fails if order reversed
   expect(mask).toEqual([{ x: 2, y: 2 }])
   expect(submitted).toEqual(['fetch the parcel'])
-  // no mask → mask cleared
+  // no mask → mask cleared (one-shot)
   requestReplan('again')
+  expect(maskAtSubmitTime).toBeUndefined() // cleared before the second submit
   expect(mask).toBeUndefined()
   expect(submitted).toEqual(['fetch the parcel', 'again'])
 })
