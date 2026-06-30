@@ -1,7 +1,7 @@
 // §18.9 reintegration: cost the emitted step-list with the SAME push-aware A* (so L is in the
 // same tick unit as every typed mission), and value the delivered set with the §5.4 kernel.
 
-import { planPath, type Grid, type PlanCtx } from '../../planning/astar.js'
+import { planPath, key, type Grid, type PlanCtx } from '../../planning/astar.js'
 import { vValue, type DecayConsts } from '../../bdi/utility.js'
 import type { ParcelBelief } from '../../blackboard/beliefs.js'
 import type { AgentStep } from '../kinds.js'
@@ -10,8 +10,8 @@ import type { WorldSnapshot, SnapParcel } from './snapshot.js'
 
 export interface PlanCost { L: number; vPlan: number; reachable: boolean }
 
-const emptyCtx = (budgetMs: number): PlanCtx => ({
-  obstacles: { crateAt: new Map(), agentAt: new Set() }, // enemies not modelled (§17.7.4)
+const planCtxFor = (budgetMs: number, maskTiles?: Pos[]): PlanCtx => ({
+  obstacles: { crateAt: new Map(), agentAt: new Set((maskTiles ?? []).map((t) => key(t))) }, // enemies not modelled (§17.7.4); masked tiles blocked (§17.7.4 K_block)
   protectedTiles: [],
   budgetMs,
 })
@@ -22,7 +22,7 @@ const asBelief = (p: SnapParcel, t0: number): ParcelBelief =>
 export function costPlan(
   steps: AgentStep[], grid: Grid, snap: WorldSnapshot, tnow: number, dc: DecayConsts, budgetMs: number,
 ): PlanCost {
-  const ctx = emptyCtx(budgetMs)
+  const ctx = planCtxFor(budgetMs, snap.maskTiles)
   let cur: Pos = snap.selfPos
   let L = 0
   const carried: string[] = []
