@@ -88,6 +88,7 @@ export interface MissionDraft {
   params: MissionParams
   assignment?: { mode: 'ANY_ONE' | 'ALL' | 'PREDICATE'; count?: number; predicate?: string }
   plan?: AgentPlan
+  suppressedUntil?: number // §17.7.4 executor anti-phantom: branch withheld from uMission until this tick
 }
 
 export interface Mission extends MissionDraft {
