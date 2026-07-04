@@ -13,12 +13,15 @@ export interface CompileDeps {
   compile: (raw: string) => Promise<CompileResult>
   reactPlan: (raw: string, snap: WorldSnapshot) => Promise<CompileResult>
   snapshot: () => WorldSnapshot | null
+  pddlCompile?: (raw: string) => Promise<CompileResult> // §17 PDDL lane; required when handler==='PDDL'
 }
 
 export function makeMissionCompile(deps: CompileDeps): (raw: string) => Promise<CompileResult> {
   if (deps.handler === 'OFF') return deps.compile
   if (deps.handler === 'PDDL') {
-    return async () => { throw new Error('MISSION_HANDLER=PDDL not implemented (future slice)') }
+    // §17: the PDDL lane owns compilation. Misconfigured (no lane wired) ⇒ discard, never throw
+    // into the intake — a planner-less run must degrade to no missions, not crash the agent.
+    return deps.pddlCompile ?? (async () => ({ kind: 'discard', reason: 'not_applicable' }))
   }
   // LLM_AGENT: fresh snapshot per mission; one born-stale re-plan if the world moved during planning.
   return async (raw: string): Promise<CompileResult> => {

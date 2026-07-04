@@ -11,6 +11,8 @@ import { compile } from '../mission/compiler.js'
 import { createIntake } from '../mission/intake.js'
 import { reactPlan } from '../mission/agent/loop.js'
 import { makeMissionCompile, snapshotFromBeliefs } from '../mission/agent/wire.js'
+import { makePddlCompile } from '../mission/pddl/lane.js'
+import { onlineSolver } from '../mission/pddl/solver.js'
 import { buildGrid } from '../planning/astar.js'
 import { decayConsts } from '../bdi/utility.js'
 import type { BeliefBase } from '../blackboard/beliefs.js'
@@ -66,6 +68,16 @@ async function boot(config: Config, params: Params): Promise<void> {
       reactPlan(raw, snap, chat, grid!, decayConsts(client.consts), tnow, params, nextId),
     snapshot: () =>
       grid !== null && beliefs !== null ? snapshotFromBeliefs(beliefs, grid.deliveryZones, tnow) : null,
+    pddlCompile: makePddlCompile({
+      grid: () => grid,
+      snapshot: () =>
+        grid !== null && beliefs !== null ? snapshotFromBeliefs(beliefs, grid.deliveryZones, tnow) : null,
+      solve: onlineSolver,
+      dc: decayConsts(client.consts),
+      params,
+      tnow: () => tnow,
+      nextId,
+    }),
   })
 
   const intake = createIntake({
