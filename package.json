@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@unitn-asa/deliveroo-js-sdk": "latest",
+    "@unitn-asa/pddl-client": "^1.7.7",
     "openai": "^6.43.0",
     "pino": "^9",
     "socket.io-client": "^4.7.2",
