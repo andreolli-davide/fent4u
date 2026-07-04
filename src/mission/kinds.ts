@@ -160,7 +160,7 @@ export const EMIT_MISSION_FN = {
       abstractIntent: { type: 'string', description: 'One-line restatement of the goal' },
       sub: { type: 'string', enum: ['PRICED', 'ABSOLUTE'], description: 'HARD_CONSTRAINT flavour only' },
       deadline: { type: 'number', description: 'Latest tick to complete, if stated' },
-      params: { type: 'object', description: 'Kind-specific transcribed params. HARD_CONSTRAINT PRICED: priced=[{tile:{tag:"TEXT_BOUND",x,y},toll}]. HARD_CONSTRAINT ABSOLUTE: absolute={kind:"REWARD_THRESHOLD",max} OR {kind:"ZONE",tile:{tag:"TEXT_BOUND",x,y}}. Transcribe ONLY stated literals; never invent coordinates. REWARD_SHAPER: m (count->factor map), g (tile->factor list).' },
+      params: { type: 'object', description: 'Kind-specific transcribed params. CANDIDATE_INTENTION: targetTile={tag:"TEXT_BOUND",x,y} for a stated coordinate (x/y may be arithmetic strings like "4*2"); omit if no coordinate is stated. HARD_CONSTRAINT PRICED: priced=[{tile:{tag:"TEXT_BOUND",x,y},toll}]. HARD_CONSTRAINT ABSOLUTE: absolute={kind:"REWARD_THRESHOLD",max} OR {kind:"ZONE",tile:{tag:"TEXT_BOUND",x,y}}. Transcribe ONLY stated literals; never invent coordinates. REWARD_SHAPER: m (count->factor map), g (tile->factor list). COORDINATION_CONTRACT: set contractType to "HANDOFF" (one agent picks up a parcel, a DIFFERENT agent delivers it, e.g. "one picks up, the other delivers"), "RENDEZVOUS" (both agents meet near a point), or "SYNC_GATE" (move only on a green/go signal); coordinate-free — the runtime binds tiles and roles.' },
     },
     required: ['kind', 'payoff', 'abstractIntent', 'params'],
   },
