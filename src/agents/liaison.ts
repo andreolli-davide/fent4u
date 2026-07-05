@@ -55,10 +55,13 @@ async function boot(config: Config, params: Params): Promise<void> {
   contracts = new ContractRuntime()
 
   const missionView = new TeamMissionView()
-  const broadcast = config.MISSION_HANDLER !== 'LLM_AGENT'
   const missionSlot = new MissionSlot((m) => {
     missionView.set(m)
-    if (broadcast) send({ from: 'liaison', to: 'courier', type: 'mission', payload: m })
+    // Broadcast every mission the Courier must act on (shapers/tolls/filters reshape ITS valuation,
+    // a COORDINATION_CONTRACT needs it to take a role). An AGENT_PLAN is single-agent and executed
+    // only by the Liaison assignee (§17.8), so it stays local. A null (teardown) always broadcasts
+    // to clear the Courier's view. This holds across all three handlers (OFF/PDDL/LLM_AGENT).
+    if (m === null || m.kind !== 'AGENT_PLAN') send({ from: 'liaison', to: 'courier', type: 'mission', payload: m })
   })
   const chat = makeChat(config)
 
