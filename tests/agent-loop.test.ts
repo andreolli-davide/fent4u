@@ -66,3 +66,59 @@ test('no terminal within MAX_ITERS is discarded', async () => {
   const r = await reactPlan('loops forever', snap, chat, grid, dc, 0, { ...DEFAULT_PARAMS, max_iters: 3 }, ids)
   expect(r).toEqual({ kind: 'discard', reason: 'malformed' })
 })
+
+// §18.5 family 3 — strategy hooks reproduce the typed L2 taxonomy through the LLM's tools.
+test('set_reward_shaper installs a REWARD_SHAPER mission', async () => {
+  const chat = scripted([call('set_reward_shaper', { m: { '3': 2 } })])
+  const r = await reactPlan('deliver stacks of 3 to double', snap, chat, grid, dc, 0, DEFAULT_PARAMS, ids)
+  expect(r.kind).toBe('mission')
+  if (r.kind !== 'mission') throw new Error('unreachable')
+  expect(r.mission.kind).toBe('REWARD_SHAPER')
+  expect(r.mission.params.m).toEqual({ '3': 2 })
+})
+
+test('add_constraint (priced) installs a HARD_CONSTRAINT with a toll', async () => {
+  const chat = scripted([call('add_constraint', { tile: { x: 3, y: 0 }, penalty: 50 })])
+  const r = await reactPlan('do not cross (3,0) or lose 50', snap, chat, grid, dc, 0, DEFAULT_PARAMS, ids)
+  if (r.kind !== 'mission') throw new Error('unreachable')
+  expect(r.mission.kind).toBe('HARD_CONSTRAINT')
+  expect(r.mission.sub).toBe('PRICED')
+  expect(r.mission.params.priced).toEqual([{ tile: { tag: 'TEXT_BOUND', x: 3, y: 0 }, toll: 50 }])
+})
+
+test('add_constraint (reward cap) installs an ABSOLUTE HARD_CONSTRAINT', async () => {
+  const chat = scripted([call('add_constraint', { maxReward: 10 })])
+  const r = await reactPlan('parcels over 10 give no reward', snap, chat, grid, dc, 0, DEFAULT_PARAMS, ids)
+  if (r.kind !== 'mission') throw new Error('unreachable')
+  expect(r.mission.kind).toBe('HARD_CONSTRAINT')
+  expect(r.mission.params.absolute).toEqual({ kind: 'REWARD_THRESHOLD', max: 10 })
+})
+
+// §18.5 family 4 — propose_contract reproduces the typed L3 coordination.
+test('propose_contract installs a COORDINATION_CONTRACT mission', async () => {
+  const chat = scripted([call('propose_contract', { type: 'HANDOFF', payoff: 200 })])
+  const r = await reactPlan('one picks, the other delivers, +200', snap, chat, grid, dc, 0, DEFAULT_PARAMS, ids)
+  if (r.kind !== 'mission') throw new Error('unreachable')
+  expect(r.mission.kind).toBe('COORDINATION_CONTRACT')
+  expect(r.mission.params.contractType).toBe('HANDOFF')
+  expect(r.mission.payoff).toBe(200)
+})
+
+test('message_partner is non-terminal; the plan still finishes', async () => {
+  const chat = scripted([
+    call('message_partner', { text: 'I take p1' }),
+    call('emit_plan', { payoff: 10, steps: [{ op: 'goto', target: { x: 2, y: 0 } }] }),
+  ])
+  const r = await reactPlan('coordinate then move', snap, chat, grid, dc, 0, DEFAULT_PARAMS, ids)
+  if (r.kind !== 'mission') throw new Error('unreachable')
+  expect(r.mission.kind).toBe('AGENT_PLAN')
+})
+
+test('clear_policy installs an identity REWARD_SHAPER (resets valuation)', async () => {
+  const chat = scripted([call('clear_policy', {})])
+  const r = await reactPlan('reset policy', snap, chat, grid, dc, 0, DEFAULT_PARAMS, ids)
+  if (r.kind !== 'mission') throw new Error('unreachable')
+  expect(r.mission.kind).toBe('REWARD_SHAPER')
+  expect(r.mission.params.m).toBeUndefined()
+  expect(r.mission.params.g).toBeUndefined()
+})
