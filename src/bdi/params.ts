@@ -28,6 +28,10 @@ export interface Params {
   max_iters: number          // §18.9 max ReAct turns per plan mission
   max_iters_query: number    // §18.9 max ReAct turns for an atomic QUERY
   batch_max: number          // §18.4 independent tool calls per turn
+  kblock_max: number         // §17.7.4 consecutive blocked ticks before a masked re-plan
+  antiphantom_n: number      // §17.7.4 no-progress ticks before suppressing the branch
+  suppress_ticks: number     // §17.7.4 branch suppression duration (ticks)
+  replan_debounce_ticks: number // I1: min ticks between born-stale (opportunity) re-plans; 0 disables
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -56,6 +60,10 @@ export const DEFAULT_PARAMS: Params = {
   max_iters: 12,
   max_iters_query: 3,
   batch_max: 6,
+  kblock_max: 5,
+  antiphantom_n: 8,
+  suppress_ticks: 20,
+  replan_debounce_ticks: 4,
 }
 
 type Range = [min: number, max: number]
@@ -85,6 +93,10 @@ const RANGES: Record<keyof Params, Range> = {
   max_iters: [1, 100],
   max_iters_query: [1, 100],
   batch_max: [1, 50],
+  kblock_max: [1, 1000],
+  antiphantom_n: [1, 1000],
+  suppress_ticks: [1, 100000],
+  replan_debounce_ticks: [0, 1000],
 }
 
 export function loadParams(path = 'config/params.yaml'): Params {
