@@ -23,14 +23,21 @@ export function buildCountShaper(m: MissionParams['m']): CountShaper {
   return (k: number) => table.get(k) ?? 1
 }
 
-/** location->factor over the delivery tile (§6). RUNTIME_BOUND tiles are unbound this slice. */
-export function buildZoneShaper(g: MissionParams['g']): ZoneShaper {
+/**
+ * location->factor over the delivery tile (§6). TEXT_BOUND tiles bind directly; RUNTIME_BOUND tiles
+ * bind through `resolve` (a region resolver, §17.5.3) — the runtime chooses the concrete zone from
+ * the map. An unresolvable RUNTIME_BOUND entry is dropped (grounding fail), leaving identity there.
+ */
+export function buildZoneShaper(g: MissionParams['g'], resolve?: (rule: string) => Pos | null): ZoneShaper {
   if (g === undefined || g.length === 0) return G1
   const table = new Map<string, number>()
   for (const e of g) {
-    if (e.tile.tag !== 'TEXT_BOUND') continue
     if (!Number.isFinite(e.factor)) continue
-    table.set(posKey({ x: e.tile.x, y: e.tile.y }), e.factor)
+    const tile = e.tile.tag === 'TEXT_BOUND'
+      ? { x: e.tile.x, y: e.tile.y }
+      : resolve?.(e.tile.rule) ?? null
+    if (tile === null) continue // RUNTIME_BOUND unresolved ⇒ drop (grounding fail)
+    table.set(posKey(tile), e.factor)
   }
   if (table.size === 0) return G1
   return (z: Pos) => table.get(posKey(z)) ?? 1
@@ -91,14 +98,17 @@ export function buildTolls(priced: MissionParams['priced']): Map<string, number>
   return out
 }
 
-/** §7.2 absolute constraint -> BundleFilter. Identity (F1) when absent. */
-export function buildBundleFilter(absolute: MissionParams['absolute']): BundleFilter {
+/** §7.2 absolute constraint -> BundleFilter. Identity (F1) when absent. RUNTIME_BOUND ZONE binds via `resolve`. */
+export function buildBundleFilter(absolute: MissionParams['absolute'], resolve?: (rule: string) => Pos | null): BundleFilter {
   if (absolute === undefined) return F1
   if (absolute.kind === 'REWARD_THRESHOLD') {
     const max = absolute.max
     return (S) => S.every((p) => p.rewardSeen <= max) // §7.3 worst-case: any over-max voids all
   }
-  if (absolute.tile.tag !== 'TEXT_BOUND') return F1 // RUNTIME_BOUND deferred this slice
-  const forbidden = key({ x: absolute.tile.x, y: absolute.tile.y })
+  const tile = absolute.tile.tag === 'TEXT_BOUND'
+    ? { x: absolute.tile.x, y: absolute.tile.y }
+    : resolve?.(absolute.tile.rule) ?? null
+  if (tile === null) return F1 // RUNTIME_BOUND unresolved ⇒ no filter (grounding fail)
+  const forbidden = key(tile)
   return (_S, z) => key(z) !== forbidden
 }

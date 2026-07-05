@@ -6,6 +6,7 @@ import { ClaimStore, isClaimMsg } from '../coordination/claims.js'
 import { ContractRuntime, isContractMsg, isGateMsg } from '../coordination/contract.js'
 import { TeamMissionView } from '../mission/view.js'
 import { isMission } from '../mission/kinds.js'
+import { buildGrid } from '../planning/astar.js'
 import type { WorkerEnvelope, A2AMessage } from '../types/a2a.js'
 import type { Config } from '../types/config.js'
 import type { Params } from '../bdi/params.js'
@@ -37,6 +38,7 @@ async function boot(config: Config, params: Params): Promise<void> {
   contracts = new ContractRuntime()
 
   missionView = new TeamMissionView()
+  missionView.bindGrid(buildGrid(client.map)) // §17.5.3: resolve RUNTIME_BOUND zones against the map
   const loop = new BdiLoop(client, params, {
     info: (obj, msg) => log!.info(obj as object, msg),
     debug: (obj, msg) => log!.debug(obj as object, msg),
