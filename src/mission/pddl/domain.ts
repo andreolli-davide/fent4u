@@ -26,6 +26,23 @@ export const DELIVEROO_DOMAIN = `(define (domain deliveroo)
     :effect (and (not (carrying ?p)) (delivered ?p))))
 `
 
+// §17.5.2 grid-level Coverage domain (traversal goal): visit every target tile. `visited` is set on
+// entry; the goal conjoins `visited` over the target set. Constraints (StayOn/KeepAway/Avoid) are
+// applied by FILTERING the `adjacent` facts in :init (§17.5.2 "second application point"), so no
+// domain change is needed for them — a masked tile simply has no adjacency and cannot be entered.
+export const COVERAGE_DOMAIN = `(define (domain deliveroo-coverage)
+  (:requirements :strips :typing)
+  (:types tile)
+  (:predicates
+    (at ?t - tile)
+    (adjacent ?from - tile ?to - tile)
+    (visited ?t - tile))
+  (:action move
+    :parameters (?from - tile ?to - tile)
+    :precondition (and (at ?from) (adjacent ?from ?to))
+    :effect (and (not (at ?from)) (at ?to) (visited ?to))))
+`
+
 // PDDL identifiers can't carry commas or special chars: tiles → t{x}_{y}, parcels → indexed pk{n}
 // (server ids may contain anything). The lane keeps the pk{n} → realId map to rebuild AgentSteps.
 export const tileName = (x: number, y: number): string => `t${x}_${y}`

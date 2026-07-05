@@ -12,6 +12,7 @@ import { createIntake } from '../mission/intake.js'
 import { reactPlan } from '../mission/agent/loop.js'
 import { makeMissionCompile, snapshotFromBeliefs, makeReplanRequester } from '../mission/agent/wire.js'
 import { makePddlCompile } from '../mission/pddl/lane.js'
+import { transcribePddl } from '../mission/pddl/transcribe.js'
 import { onlineSolver } from '../mission/pddl/solver.js'
 import { buildGrid } from '../planning/astar.js'
 import { decayConsts } from '../bdi/utility.js'
@@ -97,6 +98,7 @@ async function boot(config: Config, params: Params): Promise<void> {
       params,
       tnow: () => tnow,
       nextId,
+      transcribe: (raw) => transcribePddl(raw, chat), // §17.4 Call 2 (LLM-PDDL)
     }),
   })
 
