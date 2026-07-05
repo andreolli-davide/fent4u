@@ -9,7 +9,7 @@ import { buildRoute, uRoute, routeFromClaims } from './route.js'
 import { select, chooseExplore, matches, type Intention, type Candidate } from './intentions.js'
 import type { Params } from './params.js'
 import { ClaimStore, type ClaimMsg, type Claim } from '../coordination/claims.js'
-import { advance, type Contract, type ContractMsg, type ContractRuntime } from '../coordination/contract.js'
+import { advance, contractMeetTile, type Contract, type ContractMsg, type ContractRuntime } from '../coordination/contract.js'
 import { buildContract } from '../coordination/bridge.js'
 import { runAuction, type AgentSnap } from '../coordination/auction.js'
 import { runRebalance, type RebalanceAgent } from '../coordination/rebalance.js'
@@ -130,8 +130,22 @@ export class BdiLoop {
         tnow,
       })
       if (c !== null) {
-        this.sendContract(this.mission.contracts.propose(c))
-        this.log.info({ tick: tnow, contract: c.id, type: c.type }, 'contract proposed')
+        // §8.6 adoption gate: adopt only when payoff clears the combined forgone base utility of
+        // BOTH agents over the contract's makespan. Makespan ≈ the farther agent's approach to the
+        // meeting tile (both move in parallel); combined rate ≈ 2·ρ_ref. A cheap +200 handoff while
+        // both agents are flying rich routes may not clear; a +500 rendezvous usually does. Decline
+        // = hold (retry next tick as the estimate shifts), never strand — the mission stays installed.
+        const meet = contractMeetTile(c)
+        const dSelf = dist(self, meet).L
+        const dPartner = partner !== null ? dist(partner.pos, meet).L : dSelf
+        const makespan = Math.max(Number.isFinite(dSelf) ? dSelf : 0, Number.isFinite(dPartner) ? dPartner : 0)
+        const forgone = 2 * this.rateTracker.rhoRef() * makespan
+        if (c.payoff <= forgone) {
+          this.log.debug({ tick: tnow, contract: c.id, payoff: c.payoff, forgone }, 'contract declined (adoption gate)')
+        } else {
+          this.sendContract(this.mission.contracts.propose(c, tnow))
+          this.log.info({ tick: tnow, contract: c.id, type: c.type, payoff: c.payoff, forgone }, 'contract proposed')
+        }
       } else {
         this.log.debug({ tick: tnow, missionId: mView.current()!.id }, 'contract bind pending')
       }
@@ -142,6 +156,16 @@ export class BdiLoop {
     // own) releases them. Runs BEFORE the contract short-circuit so a release tick still falls
     // through to base play.
     this.reconcileContractLocks(tnow)
+
+    // §8.6 per-tick contract liveness: abort a PROPOSED contract the partner never accepted
+    // (COMMIT_TIMEOUT) and fail an ACTIVE one past its deadline (BARRIER_DEADLINE). Idempotent on
+    // both replicas (teardown clears the slot); runs before the active-contract short-circuit so a
+    // just-failed contract falls through to base play this same tick.
+    const liveMsg = this.mission?.contracts?.tick(tnow, this.params.commit_timeout) ?? null
+    if (liveMsg !== null) {
+      this.sendContract(liveMsg)
+      this.log.info({ tick: tnow, teardown: liveMsg.kind === 'teardown' ? liveMsg.status : liveMsg.kind }, 'contract liveness teardown')
+    }
 
     // §8 — a COMMITTED contract preempts base play. Adoption is a one-time decision (§8.6); once
     // ACTIVE the contract is executed directly, NOT re-bid against route/explore each tick. This

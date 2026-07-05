@@ -89,7 +89,7 @@ test('Courier (pursue:false) never proposes a contract', async () => {
 // Build an ACTIVE, fully-staged SYNC_GATE so advance() yields 'gated'.
 function gatedRuntime(): ContractRuntime {
   const rt = new ContractRuntime()
-  rt.applyMsg({ kind: 'propose', contract: syncGateContract('g1', { x: 0, y: 0 }, 9, 700, 9999) }, 'liaison')
+  rt.applyMsg({ kind: 'propose', contract: syncGateContract('g1', { x: 0, y: 1 }, 700, 9999) }, 'liaison')
   rt.applyMsg({ kind: 'post', id: 'g1', milestone: 'l_staged' }, 'liaison')
   rt.applyMsg({ kind: 'post', id: 'g1', milestone: 'c_staged' }, 'liaison')
   return rt
