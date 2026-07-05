@@ -40,6 +40,27 @@ export function bindRoles(parcel: Pos, a: AgentRef, b: AgentRef): { picker: Agen
 
 // §8.4 default in-zone radius when the LLM transcribed none (the worked example uses 3).
 export const RENDEZVOUS_RADIUS = 3
+
+// §8.5 odd-row staging: the walkable, non-wall tile with ODD y nearest `target` (BFS-free: scan by
+// increasing Manhattan). null ⇒ no odd-row tile on the map (decline the sync-gate). Deterministic.
+export function nearestOddRowTile(grid: Grid, target: Pos): Pos | null {
+  const walkable = (x: number, y: number): boolean => {
+    const t = grid.tiles.get(`${x},${y}`)
+    return t !== undefined && t.type !== 'wall'
+  }
+  let best: Pos | null = null
+  let bestD = Infinity
+  for (let x = 0; x < grid.w; x++) {
+    for (let y = 1; y < grid.h; y += 2) { // odd rows only
+      if (!walkable(x, y)) continue
+      const dd = manhattan({ x, y }, target)
+      if (dd < bestD || (dd === bestD && best !== null && (x < best.x || (x === best.x && y < best.y)))) {
+        best = { x, y }; bestD = dd
+      }
+    }
+  }
+  return best
+}
 // Fallback contract lifetime when the mission carries no deadline (absolute-tick deadline added in loop).
 export const DEFAULT_CONTRACT_TTL = 500
 
@@ -92,7 +113,9 @@ export function buildContract(mission: Mission, grid: Grid, ctx: BuildCtx): Cont
     case 'SYNC_GATE': {
       const target = rendezvousTarget(mission, grid)
       if (target === null) return null
-      return syncGateContract(`${mission.id}:SYNC_GATE`, target, RENDEZVOUS_RADIUS, mission.payoff, deadline)
+      const hint = nearestOddRowTile(grid, target)
+      if (hint === null) return null // no reachable odd row to stage on ⇒ decline
+      return syncGateContract(`${mission.id}:SYNC_GATE`, hint, mission.payoff, deadline)
     }
     default:
       return null

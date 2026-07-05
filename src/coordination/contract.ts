@@ -13,9 +13,12 @@ export type ContractStatus =
 
 // What a LOCAL party must verify alone (§8.1). AT_TILE: an exact tile. IN_ZONE: within
 // `radius` of `center` under the SERVER's distance metric — never A* path length (§8.4).
+// ODD_ROW: on any odd-parity row (the §8.5 "reach an odd row" sync-gate staging); `hint` is a
+// concrete odd-row tile to route toward while off-parity.
 export type LocalGoal =
   | { kind: 'AT_TILE'; tile: Pos }
   | { kind: 'IN_ZONE'; center: Pos; radius: number }
+  | { kind: 'ODD_ROW'; hint: Pos }
 
 const manhattan = (a: Pos, b: Pos): number => Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
 
@@ -23,13 +26,16 @@ const manhattan = (a: Pos, b: Pos): number => Math.abs(a.x - b.x) + Math.abs(a.y
 // "within distance r" by a different rule, THIS is the single calibration point (§8.4).
 export function goalSatisfied(goal: LocalGoal, self: Pos): boolean {
   if (goal.kind === 'AT_TILE') return self.x === goal.tile.x && self.y === goal.tile.y
+  if (goal.kind === 'ODD_ROW') return self.y % 2 !== 0
   return manhattan(self, goal.center) <= goal.radius
 }
 
 // The tile to route TOWARD while the goal is unmet. A* routes into the zone; goalSatisfied
 // (server metric) decides arrival — they may disagree at the boundary, by design (§8.4).
 export function navTarget(goal: LocalGoal): Pos {
-  return goal.kind === 'AT_TILE' ? goal.tile : goal.center
+  if (goal.kind === 'AT_TILE') return goal.tile
+  if (goal.kind === 'ODD_ROW') return goal.hint
+  return goal.center
 }
 
 // A single step in the contract's plan. Both agents hold the SAME list; each executes only its
@@ -94,6 +100,19 @@ export function advance(c: Contract, me: AgentId, self: Pos): ContractAction {
   return { kind: 'block' }
 }
 
+// §8.6 adoption-gate helper: a representative "meeting" tile whose two-agent approach approximates
+// the contract makespan (used to price the combined forgone base utility before proposing). For a
+// RENDEZVOUS/SYNC_GATE it is the staging centre / odd-row hint; for a HANDOFF the drop tile.
+export function contractMeetTile(c: Contract): Pos {
+  for (const s of c.steps) {
+    if (s.kind === 'LOCAL' && s.goal.kind === 'IN_ZONE') return s.goal.center
+    if (s.kind === 'LOCAL' && s.goal.kind === 'ODD_ROW') return s.goal.hint
+    if (s.kind === 'ACTION' && s.primitive === 'putDown' && s.onDelivery !== true) return s.at
+  }
+  const anyAction = c.steps.find((s): s is Extract<Step, { kind: 'ACTION' }> => s.kind === 'ACTION')
+  return anyAction?.at ?? { x: 0, y: 0 }
+}
+
 // The contract sub-protocol carried in A2AMessage.payload on the `type:'contract'` channel.
 // propose/accept = the §8.2 handshake; post = replicate a milestone; teardown = §8.2 terminal.
 export type ContractMsg =
@@ -143,6 +162,7 @@ export function isGateMsg(p: unknown): p is GateMsg {
 // has no adoption gate (§8.6) and no deadline/FAILED logic — see the follow-on plans.
 export class ContractRuntime {
   private c: Contract | null = null
+  private proposedAt: number | null = null // tick the current PROPOSED was installed (§8.6 commit timeout)
 
   // §8.5 gate flag — lifetime = the active SYNC_GATE contract. Default OPEN so it is inert outside a
   // SYNC_GATE (gate scoping: callers only consult gateOpen() while a SYNC_GATE contract is ACTIVE).
@@ -156,10 +176,37 @@ export class ContractRuntime {
   active(): Contract | null { return this.c?.status === 'ACTIVE' ? this.c : null }
 
   // Liaison side: install PROPOSED and return the msg to broadcast. Goes ACTIVE on the accept.
-  propose(contract: Contract): ContractMsg {
+  propose(contract: Contract, now = 0): ContractMsg {
     this.c = { ...contract, status: 'PROPOSED' }
+    this.proposedAt = now
     this.resetGate()
     return { kind: 'propose', contract: this.c }
+  }
+
+  // §8.6 per-tick liveness. Drives two terminal transitions the pure `advance` cannot see:
+  //  (a) COMMIT_TIMEOUT — a PROPOSED contract the partner never accepted is aborted (never strand
+  //      the proposer waiting); (b) BARRIER_DEADLINE — an ACTIVE contract past its `deadline` fails
+  //      (a blocked/lost partner cannot deadlock the pair). Returns the teardown to broadcast, else null.
+  tick(now: number, commitTimeout: number): ContractMsg | null {
+    if (this.c === null) return null
+    if (this.c.status === 'PROPOSED' && this.proposedAt !== null && now - this.proposedAt > commitTimeout) {
+      return this.abort()
+    }
+    if ((this.c.status === 'ACTIVE' || this.c.status === 'COMMITTED') && now > this.c.deadline) {
+      return this.fail()
+    }
+    return null
+  }
+
+  // §8.6 commit-timeout terminal: mark ABORTED, clear, disarm the gate.
+  abort(): ContractMsg | null {
+    if (this.c === null) return null
+    const id = this.c.id
+    this.c.status = 'ABORTED'
+    this.c = null
+    this.proposedAt = null
+    this.resetGate()
+    return { kind: 'teardown', id, status: 'ABORTED' }
   }
 
   // Either agent: flip its OWN milestone and return the post msg to broadcast (§8.1).
@@ -175,6 +222,7 @@ export class ContractRuntime {
     const id = this.c.id
     this.c.status = 'SATISFIED'
     this.c = null
+    this.proposedAt = null
     this.resetGate()
     return { kind: 'teardown', id, status: 'SATISFIED' }
   }
@@ -208,6 +256,7 @@ export class ContractRuntime {
     const id = this.c.id
     this.c.status = 'FAILED'
     this.c = null
+    this.proposedAt = null
     this.resetGate()
     return { kind: 'teardown', id, status: 'FAILED' }
   }
@@ -217,9 +266,10 @@ export class ContractRuntime {
   applyMsg(msg: ContractMsg, _self: AgentId): ContractMsg | null {
     switch (msg.kind) {
       case 'propose':
-        // Receiver (Courier) accepts immediately → ACTIVE. Adoption gating is the proposer's
-        // responsibility (§8.6), deferred this slice, so acceptance is unconditional.
+        // Receiver (Courier) accepts immediately → ACTIVE. Adoption gating (§8.6) is the proposer's
+        // responsibility (applied before propose() in the loop), so acceptance is unconditional.
         this.c = { ...msg.contract, status: 'ACTIVE' }
+        this.proposedAt = null
         this.resetGate()
         return { kind: 'accept', id: msg.contract.id }
       case 'accept':
@@ -229,7 +279,7 @@ export class ContractRuntime {
         if (this.c !== null && this.c.id === msg.id) this.c.posted[msg.milestone] = true
         return null
       case 'teardown':
-        if (this.c !== null && this.c.id === msg.id) { this.c = null; this.resetGate() }
+        if (this.c !== null && this.c.id === msg.id) { this.c = null; this.proposedAt = null; this.resetGate() }
         return null
     }
   }
@@ -261,17 +311,18 @@ export function rendezvousContract(
   }
 }
 
-// §8.5 SYNC_GATE: both stage into the meet zone (reusing the rendezvous staging shape), then the
-// barrier releases into a perpetual GATED phase governed by the gate flag — NOT another step list.
-// No parcels, no roles, no MISSION lock; "odd-row" parity staging (§8.5 example) is a follow-on.
+// §8.5 SYNC_GATE: both stage onto an ODD ROW ("red-light/green-light" example — both reach an odd
+// row, then freeze until the gate goes green), then the barrier releases into a perpetual GATED
+// phase governed by the gate flag — NOT another step list. No parcels, no roles, no MISSION lock.
+// `hint` is a concrete odd-row tile each agent routes toward while off-parity (goalSatisfied checks
+// parity only, so any odd row credits the barrier).
 export function syncGateContract(
   id: string,
-  target: Pos,
-  radius: number,
+  hint: Pos,
   payoff: number,
   deadline: number,
 ): Contract {
-  const goal = { kind: 'IN_ZONE' as const, center: target, radius }
+  const goal = { kind: 'ODD_ROW' as const, hint }
   return {
     id,
     type: 'SYNC_GATE',

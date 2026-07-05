@@ -22,6 +22,13 @@ import type { Config } from '../types/config.js'
 import type { Params } from '../bdi/params.js'
 import type { Pos } from '../types/perception.js'
 
+// §8.5 red-light/green-light parser: map a chat signal to a gate state, else null (not a signal).
+function gateSignal(text: string): 'OPEN' | 'CLOSED' | null {
+  if (/\b(green|go)\b/i.test(text)) return 'OPEN'
+  if (/\b(red|stop|freeze|halt)\b/i.test(text)) return 'CLOSED'
+  return null
+}
+
 let log: ReturnType<typeof makeLogger> | null = null
 let blackboard: Blackboard | null = null
 let claims: ClaimStore | null = null
@@ -97,8 +104,17 @@ async function boot(config: Config, params: Params): Promise<void> {
     logger: log,   // log is non-null here — set at top of boot()
   })
   client.onMissionMsg((id, _name, msg) => {
-    if (typeof msg === 'string') intake.onMessage(id, msg)
-    else intake.onMessage(id, JSON.stringify(msg))
+    const text = typeof msg === 'string' ? msg : JSON.stringify(msg)
+    // §8.5 SYNC_GATE live source: while a SYNC_GATE is ACTIVE, a red/green signal from the chat
+    // toggles the shared gate flag (broadcast on the 'gate' channel) instead of compiling a mission.
+    const sig = gateSignal(text)
+    if (sig !== null && contracts?.active()?.type === 'SYNC_GATE') {
+      const gm = contracts.setGate(sig, tnow)
+      if (gm !== null) send({ from: 'liaison', to: 'courier', type: 'gate', payload: gm })
+      log?.info({ tick: tnow, gate: sig }, 'sync-gate signal')
+      return
+    }
+    intake.onMessage(id, text)
   })
   log.info({}, 'mission lane online')
 
