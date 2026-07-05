@@ -127,6 +127,7 @@ async function boot(config: Config, params: Params): Promise<void> {
     if (!booted) {
       beliefs = loop.beliefBase(snap)
       grid = buildGrid(client.map)
+      missionView.bindGrid(grid) // §17.5.3: RUNTIME_BOUND shaper/constraint zones resolve against the map
       blackboard = new Blackboard(beliefs, { self: 'liaison', partner: 'courier', send, logger, partnerTtl: params.partner_lost_ticks })
       blackboard.hello(snap.tick)
       booted = true
