@@ -58,6 +58,7 @@ export async function reactPlan(
   for (let iter = 0; iter < maxIters; iter++) {
     const turn = await chat(msgs, AGENT_TOOLS)
     if (!('calls' in turn) || turn.calls.length === 0) return discard()
+    if (turn.calls.length > params.batch_max) return discard() // §18.4 BATCH_MAX cap on parallel tool calls
 
     // One terminal per turn ends the loop; otherwise process calls in order (actions forward-apply).
     for (const c of turn.calls) {
