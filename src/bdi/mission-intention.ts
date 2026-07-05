@@ -21,6 +21,7 @@ export function uMission(
   params: Params,
 ): Candidate | null {
   if (mission.kind === 'AGENT_PLAN') {
+    if (mission.suppressedUntil !== undefined && mission.suppressedUntil > tnow) return null // §17.7.4 anti-phantom
     const plan = mission.plan
     if (plan === undefined || !Number.isFinite(plan.L)) return null
     const Lm = plan.L

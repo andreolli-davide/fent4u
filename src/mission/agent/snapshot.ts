@@ -16,6 +16,7 @@ export interface WorldSnapshot {
   zones: Pos[]
   partnerPos: Pos | null
   sig: string
+  maskTiles?: Pos[] // §17.7.4 K_block: tiles the cost A* must treat as blocked on a re-plan
 }
 
 export function forwardApply(s: WorldSnapshot, step: AgentStep): WorldSnapshot {
