@@ -11,16 +11,23 @@ import type { DecayConsts } from '../../bdi/utility.js'
 import { assembleMission, isAgentStep, type AgentStep, type MissionDraft } from '../kinds.js'
 import { costPlan } from './cost.js'
 import { forwardApply, type WorldSnapshot } from './snapshot.js'
-import { AGENT_TOOLS, isReadTool, isActionTool, executeRead, actionStep } from './tools.js'
+import {
+  AGENT_TOOLS, isReadTool, isActionTool, isStrategyTool, isCoordTool,
+  executeRead, actionStep, strategyDraft, coordDraft,
+} from './tools.js'
 
 const SYSTEM = [
-  'You are an agent that compiles ONE natural-language mission into a plan, or answers a question.',
+  'You are an agent that handles ONE natural-language mission end to end, or answers a question.',
   'Reason with Thought then tool calls. Use read tools (get_my_position, scan_world, get_parcel,',
-  'list_delivery_zones, get_partner_status) to inspect the world. Use goto/pickup/deliver/wait to',
-  'build a plan. For ANY arithmetic call calculate — never compute yourself. Never invent coordinates:',
-  'use only positions returned by read tools. For a stateless question, call answer(text). Otherwise',
-  'finish with emit_plan(payoff, deadline?, steps[]). Transcribe the payoff sign exactly. If sign or',
-  'feasibility is ambiguous, prefer the conservative (safer) interpretation.',
+  'list_delivery_zones, get_partner_status) to inspect the world. Pick the handling that fits:',
+  '(1) a stateless question → answer(text);',
+  '(2) a strategy/valuation change (stack sizes, zone multipliers, avoid a tile/reward cap) →',
+  'set_reward_shaper / set_zone_value / add_constraint / clear_policy (terminal);',
+  '(3) a joint goal with the partner (handoff / rendezvous / move-on-signal) → propose_contract (terminal);',
+  '(4) otherwise build a plan with goto/pickup/deliver/wait and finish with emit_plan(payoff, deadline?, steps[]).',
+  'For ANY arithmetic call calculate — never compute yourself. Never invent coordinates: transcribe only',
+  'stated literals or positions returned by read tools. Transcribe the payoff sign exactly. If sign or',
+  'feasibility is ambiguous, prefer the conservative (safer) interpretation (treat as a constraint to avoid).',
 ].join(' ')
 
 const discard = (): CompileResult => ({ kind: 'discard', reason: 'malformed' })
@@ -42,9 +49,16 @@ export async function reactPlan(
   const steps: AgentStep[] = []
   const maxIters = params.max_iters
 
+  // §18.6 acknowledgement for a non-terminal tool call (keeps the tool-call/result pairing valid).
+  const ack = (c: { id?: string; name: string; arguments: string }, iter: number, obs = 'ok'): void => {
+    msgs.push({ role: 'assistant', content: null, tool_calls: [{ id: c.id ?? `c_${iter}`, type: 'function', function: { name: c.name, arguments: c.arguments } }] })
+    msgs.push({ role: 'tool', tool_call_id: c.id ?? `c_${iter}`, content: obs })
+  }
+
   for (let iter = 0; iter < maxIters; iter++) {
     const turn = await chat(msgs, AGENT_TOOLS)
     if (!('calls' in turn) || turn.calls.length === 0) return discard()
+    if (turn.calls.length > params.batch_max) return discard() // §18.4 BATCH_MAX cap on parallel tool calls
 
     // One terminal per turn ends the loop; otherwise process calls in order (actions forward-apply).
     for (const c of turn.calls) {
@@ -54,6 +68,19 @@ export async function reactPlan(
       if (c.name === 'answer') {
         return typeof args.text === 'string' ? { kind: 'query', answer: args.text } : discard()
       }
+
+      // §18.5 family 3/4 terminals: a strategy or coordination tool installs the equivalent typed
+      // mission (REWARD_SHAPER / HARD_CONSTRAINT / COORDINATION_CONTRACT) — no plan cost, so it
+      // reaches the utility core / §8 bridge directly (broadcast to both agents by the runtime).
+      if (isStrategyTool(c.name) || c.name === 'propose_contract') {
+        const draft = isStrategyTool(c.name) ? strategyDraft(c.name, args, text) : coordDraft(c.name, args, text)
+        if (draft === null) return discard()
+        return { kind: 'mission', mission: assembleMission(draft, text, nextId()) }
+      }
+
+      // Non-terminal coordination: claim_parcel folds into the plan's pickups (acknowledged; the
+      // emitted plan's pickup steps carry the collection); message_partner is a structured note.
+      if (isCoordTool(c.name)) { ack(c, iter); continue }
 
       if (c.name === 'emit_plan') {
         if (typeof args.payoff !== 'number' || !Number.isFinite(args.payoff)) return discard()

@@ -12,6 +12,7 @@ import { createIntake } from '../mission/intake.js'
 import { reactPlan } from '../mission/agent/loop.js'
 import { makeMissionCompile, snapshotFromBeliefs, makeReplanRequester } from '../mission/agent/wire.js'
 import { makePddlCompile } from '../mission/pddl/lane.js'
+import { transcribePddl } from '../mission/pddl/transcribe.js'
 import { onlineSolver } from '../mission/pddl/solver.js'
 import { buildGrid } from '../planning/astar.js'
 import { decayConsts } from '../bdi/utility.js'
@@ -21,6 +22,13 @@ import type { WorkerEnvelope, A2AMessage } from '../types/a2a.js'
 import type { Config } from '../types/config.js'
 import type { Params } from '../bdi/params.js'
 import type { Pos } from '../types/perception.js'
+
+// §8.5 red-light/green-light parser: map a chat signal to a gate state, else null (not a signal).
+function gateSignal(text: string): 'OPEN' | 'CLOSED' | null {
+  if (/\b(green|go)\b/i.test(text)) return 'OPEN'
+  if (/\b(red|stop|freeze|halt)\b/i.test(text)) return 'CLOSED'
+  return null
+}
 
 let log: ReturnType<typeof makeLogger> | null = null
 let blackboard: Blackboard | null = null
@@ -48,10 +56,13 @@ async function boot(config: Config, params: Params): Promise<void> {
   contracts = new ContractRuntime()
 
   const missionView = new TeamMissionView()
-  const broadcast = config.MISSION_HANDLER !== 'LLM_AGENT'
   const missionSlot = new MissionSlot((m) => {
     missionView.set(m)
-    if (broadcast) send({ from: 'liaison', to: 'courier', type: 'mission', payload: m })
+    // Broadcast every mission the Courier must act on (shapers/tolls/filters reshape ITS valuation,
+    // a COORDINATION_CONTRACT needs it to take a role). An AGENT_PLAN is single-agent and executed
+    // only by the Liaison assignee (§17.8), so it stays local. A null (teardown) always broadcasts
+    // to clear the Courier's view. This holds across all three handlers (OFF/PDDL/LLM_AGENT).
+    if (m === null || m.kind !== 'AGENT_PLAN') send({ from: 'liaison', to: 'courier', type: 'mission', payload: m })
   })
   const chat = makeChat(config)
 
@@ -87,6 +98,7 @@ async function boot(config: Config, params: Params): Promise<void> {
       params,
       tnow: () => tnow,
       nextId,
+      transcribe: (raw) => transcribePddl(raw, chat), // §17.4 Call 2 (LLM-PDDL)
     }),
   })
 
@@ -97,8 +109,17 @@ async function boot(config: Config, params: Params): Promise<void> {
     logger: log,   // log is non-null here — set at top of boot()
   })
   client.onMissionMsg((id, _name, msg) => {
-    if (typeof msg === 'string') intake.onMessage(id, msg)
-    else intake.onMessage(id, JSON.stringify(msg))
+    const text = typeof msg === 'string' ? msg : JSON.stringify(msg)
+    // §8.5 SYNC_GATE live source: while a SYNC_GATE is ACTIVE, a red/green signal from the chat
+    // toggles the shared gate flag (broadcast on the 'gate' channel) instead of compiling a mission.
+    const sig = gateSignal(text)
+    if (sig !== null && contracts?.active()?.type === 'SYNC_GATE') {
+      const gm = contracts.setGate(sig, tnow)
+      if (gm !== null) send({ from: 'liaison', to: 'courier', type: 'gate', payload: gm })
+      log?.info({ tick: tnow, gate: sig }, 'sync-gate signal')
+      return
+    }
+    intake.onMessage(id, text)
   })
   log.info({}, 'mission lane online')
 
@@ -127,6 +148,7 @@ async function boot(config: Config, params: Params): Promise<void> {
     if (!booted) {
       beliefs = loop.beliefBase(snap)
       grid = buildGrid(client.map)
+      missionView.bindGrid(grid) // §17.5.3: RUNTIME_BOUND shaper/constraint zones resolve against the map
       blackboard = new Blackboard(beliefs, { self: 'liaison', partner: 'courier', send, logger, partnerTtl: params.partner_lost_ticks })
       blackboard.hello(snap.tick)
       booted = true

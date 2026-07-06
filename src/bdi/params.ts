@@ -12,6 +12,8 @@ export interface Params {
   push_plan_budget_ms: number
   claim_ttl: number          // soft-claim expiry if no progress (ticks)
   bid_wait: number           // max wait for partner's same-epoch commit (ticks)
+  commit_timeout: number     // §8.6 abort a proposed contract if partner does not accept (ticks)
+  barrier_deadline: number   // §8.6 default per-contract barrier bound when the mission carries none (ticks)
   rebalance_period: number   // global rebalance cadence (ticks)
   auction_budget_ms: number  // anytime cap on the SSI auction (ms)
   theta_disp: number         // dispersion weight (tie-break-only)
@@ -44,6 +46,8 @@ export const DEFAULT_PARAMS: Params = {
   push_plan_budget_ms: 8,
   claim_ttl: 10,
   bid_wait: 1,
+  commit_timeout: 20,
+  barrier_deadline: 60,
   rebalance_period: 15,
   auction_budget_ms: 8,
   theta_disp: 0.05,
@@ -77,6 +81,8 @@ const RANGES: Record<keyof Params, Range> = {
   push_plan_budget_ms: [0, 1000],
   claim_ttl: [1, 1000],
   bid_wait: [0, 100],
+  commit_timeout: [1, 10000],
+  barrier_deadline: [1, 100000],
   rebalance_period: [1, 10000],
   auction_budget_ms: [0, 1000],
   theta_disp: [0, 4],

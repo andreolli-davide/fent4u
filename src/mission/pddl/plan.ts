@@ -14,6 +14,21 @@ function parseTile(name: string): Pos | null {
   return m === null ? null : { x: Number(m[1]), y: Number(m[2]) }
 }
 
+// §17.5.2 Coverage plan → steps: keep the ordered `move ?from ?to` destinations as goto steps (the
+// shared A* re-prices each leg). Consecutive duplicates are collapsed. null on a malformed tile.
+export function coveragePlanToSteps(raw: RawPlanStep[]): AgentStep[] | null {
+  const steps: AgentStep[] = []
+  for (const s of raw) {
+    if (s.action.toLowerCase() !== 'move') continue
+    const pos = parseTile((s.args[1] ?? '').toLowerCase())
+    if (pos === null) return null
+    const last = steps[steps.length - 1]
+    if (last?.op === 'goto' && last.target.x === pos.x && last.target.y === pos.y) continue
+    steps.push({ op: 'goto', target: pos })
+  }
+  return steps
+}
+
 export function solverPlanToSteps(raw: RawPlanStep[], parcelById: Map<string, string>): AgentStep[] | null {
   const steps: AgentStep[] = []
   for (const s of raw) {
