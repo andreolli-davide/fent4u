@@ -156,8 +156,20 @@ interface Node {
   tollAccum: number
   f: number
   firstStep: Step | null
+  // Cell now occupied by a crate this path pushed (its `beyond`). The search state
+  // is (pos, blockedCell): stepping onto `blockedCell` is forbidden because the crate
+  // relocated there. Without this the pos-only search "walked through" the crate it
+  // had just pushed, lying that push-gated goals were reachable (§15.2 approx bound).
+  // Carried forward across moves; overwritten on a later push (single-slot — a 2nd
+  // distinct-crate push in one path drops the first block, a rare residual we accept).
+  blockedCell: string | null
   seq: number // insertion order — final, deterministic tie-break (§9)
 }
+
+// Search-state key. Two paths at the same tile with different pushed-crate positions
+// are DIFFERENT states, so closed/bestCost must key on both. Crate-free maps never set
+// blockedCell (no push edges) ⇒ key collapses to the bare tile key, zero behaviour change.
+const skey = (pos: Pos, blockedCell: string | null): string => `${key(pos)}|${blockedCell ?? ''}`
 
 // Heap order: lower f wins; ties prefer the node with larger cost (deeper / closer
 // to goal in cost terms, so smaller remaining h); remaining ties broken by insertion
@@ -223,16 +235,16 @@ export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResu
 
   const deadline = performance.now() + ctx.budgetMs
   const open = new NodeHeap()
-  const bestCost = new Map<string, number>() // best known cost per tile — drives relaxation and stale-pop skips
+  const bestCost = new Map<string, number>() // best known cost per state (pos|blockedCell) — drives relaxation and stale-pop skips
   const closed = new Set<string>()
   let seq = 0
-  open.push({ pos: from, g: 0, cost: 0, tollAccum: 0, f: cTick * manhattan(from, to), firstStep: null, seq: seq++ })
-  bestCost.set(key(from), 0)
+  open.push({ pos: from, g: 0, cost: 0, tollAccum: 0, f: cTick * manhattan(from, to), firstStep: null, blockedCell: null, seq: seq++ })
+  bestCost.set(skey(from, null), 0)
 
   while (open.size > 0) {
     if (performance.now() > deadline) return { reachable: false, L: Infinity, firstStep: null, pushes: [], timedOut: true, tollSum: 0 }
     const cur = open.pop()
-    const ck = key(cur.pos)
+    const ck = skey(cur.pos, cur.blockedCell)
     if (closed.has(ck)) continue // stale heap duplicate (lazy decrease-key)
     closed.add(ck)
 
@@ -253,27 +265,32 @@ export function planPath(grid: Grid, ctx: PlanCtx, from: Pos, to: Pos): PathResu
     for (const { dir, dx, dy } of DIRS) {
       const np = { x: cur.pos.x + dx, y: cur.pos.y + dy }
       const nk = key(np)
-      if (closed.has(nk)) continue
+      // A crate this path already pushed sits here now — cannot be stepped onto.
+      if (nk === cur.blockedCell) continue
       if (!isFloor(grid, np) || !canEnter(grid, np, dir)) continue
       if (ctx.obstacles.agentAt.has(nk)) continue
       let firstStep: Step
+      let blockedCell = cur.blockedCell // carried forward across a plain move
       if (ctx.obstacles.crateAt.has(nk)) {
         // crate ahead: try an admissible push (skip in crates-as-walls fallback).
-        // Only the first-step push is executed (§15.2/§15.3 defers multi-push), so no
-        // cross-branch destination dedup is needed — each A* path pushes any crate once.
+        // Only the first-step push is executed (§15.2/§15.3 defers multi-push).
         if (ctx.cratesAsWalls) continue
         if (!isPushAdmissible(grid, ctx, np, dir)) continue
         const crate = ctx.obstacles.crateAt.get(nk)!
         firstStep = cur.firstStep ?? { kind: 'push', dir, crateId: crate.id }
+        // The crate relocates one tile past np; block that cell for the rest of this path.
+        blockedCell = key({ x: np.x + dx, y: np.y + dy })
       } else {
         firstStep = cur.firstStep ?? { kind: 'move', dir }
       }
+      const nsk = skey(np, blockedCell)
+      if (closed.has(nsk)) continue
       const stepToll = tollOf(nk)
       const cost = cur.cost + cTick + stepToll
-      const prev = bestCost.get(nk)
+      const prev = bestCost.get(nsk)
       if (prev !== undefined && prev <= cost) continue
-      bestCost.set(nk, cost)
-      open.push({ pos: np, g: cur.g + 1, cost, tollAccum: cur.tollAccum + stepToll, f: cost + cTick * manhattan(np, to), firstStep, seq: seq++ })
+      bestCost.set(nsk, cost)
+      open.push({ pos: np, g: cur.g + 1, cost, tollAccum: cur.tollAccum + stepToll, f: cost + cTick * manhattan(np, to), firstStep, blockedCell, seq: seq++ })
     }
   }
   return { reachable: false, L: Infinity, firstStep: null, pushes: [], timedOut: false, tollSum: 0 }
